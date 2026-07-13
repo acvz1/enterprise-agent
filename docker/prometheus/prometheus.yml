@@ -1,0 +1,27 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    application: 'enterprise-knowledge-agent'
+    environment: 'local'
+
+# 告警规则文件
+rule_files:
+  - 'alert_rules.yml'
+
+# 抓取配置
+scrape_configs:
+  # Spring Boot 应用监控
+  - job_name: 'ai-knowledge-base'
+    metrics_path: '/actuator/prometheus'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['app:8080']
+        labels:
+          application: 'enterprise-knowledge-agent'
+          instance: 'local-app'
+  
+  # Prometheus 自身监控
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

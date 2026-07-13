@@ -1,0 +1,134 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: ai-knowledge-base
+  
+  # 启用虚拟线程（JDK 21+）
+  threads:
+    virtual:
+      enabled: true
+  
+  # 数据库配置
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3307}/ai_knowledge_base?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&useServerPrepStmts=true&cachePrepStmts=true&prepStmtCacheSize=250&prepStmtCacheSqlLimit=2048
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  
+  # JPA配置
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  
+  # Redis配置
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password:
+      database: 0
+      timeout: 10000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+          max-wait: -1ms
+  
+  # MVC配置
+  mvc:
+    cors:
+      allowed-origins: "http://localhost:5173,http://localhost:3000"
+      allowed-methods: "GET,POST,PUT,DELETE,OPTIONS"
+      allowed-headers: "*"
+      allow-credentials: true
+      max-age: 3600
+  
+  # 文件上传配置
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+# 日志配置
+logging:
+  level:
+    com.kb.demo: DEBUG
+    org.springframework.web: DEBUG
+    # 压制 PDFBox 相关的 WARN 日志
+    org.apache.pdfbox: ERROR
+    org.apache.fontbox: ERROR
+
+# LangChain4J配置
+langchain4j:
+  # 默认模型配置
+  defaultModel: deepseek
+  
+  # 通义千问配置
+  qwen:
+    apiKey: ${DASHSCOPE_API_KEY}
+    baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1
+    modelName: qwen-turbo
+  
+  # DeepSeek配置
+  deepseek:
+    apiKey: ${DEEPSEEK_API_KEY}
+    baseUrl: https://api.deepseek.com
+    modelName: deepseek-chat
+  
+  # Kimi（月之暗面）配置
+  kimi:
+    apiKey: ${KIMI_API_KEY}
+    baseUrl: https://api.moonshot.cn/v1
+    modelName: moonshot-v1-8k
+  
+  # 本地Ollama配置（零成本）
+  ollama:
+    baseUrl: http://localhost:11434
+    modelName: qwen-1.8b-lora-v1
+  
+  # 会话记忆配置（轻量级）
+  conversation:
+    max-turns: 5
+    max-context-tokens: 2000
+    session-ttl-minutes: 15
+    enable-persistence: false
+
+# JWT 配置
+jwt:
+  secret: ai-knowledge-base-secret-key-minimum-256-bits-required-for-hs256-algorithm
+  expiration: 86400000  # 24小时（毫秒）
+  refresh-expiration: 604800000  # 7天（毫秒）
+
+# Spring Boot Actuator 监控配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+    prometheus:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      percentiles:
+        http.server.requests: 0.5, 0.95, 0.99
+      slo:
+        http.server.requests: 100ms, 200ms, 500ms, 1s, 2s
