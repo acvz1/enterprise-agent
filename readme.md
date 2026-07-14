@@ -2,33 +2,34 @@
 
 一个用于学习与求职展示的 Java 企业知识库 Agent 二次开发项目。
 
-当前仓库已经完成上游基线清理，但必须准确理解它的现状：**现在是带鉴权、文档管理、RAG 和流式问答的知识库应用，还不是完整 Agent**。接下来的核心任务是在这条可运行链路上亲手加入 Agent Loop、Tool Calling、ContextBuilder 和可观测的运行状态。
+当前仓库已经完成上游代码清理。它现在能完成登录、文档管理、知识库搜索和大模型问答，但还不会让大模型自己选择工具，因此还不是完整 Agent。
+
+如果你刚开始学习后端，不要先背下面的技术栈。请从 [这个项目到底在做什么](docs/00-start-here.md) 开始，再看 [三条调用链](docs/02-architecture-and-call-chain.md)。
 
 ## 当前能力
 
-- Spring Boot 3 + Java 21 后端
-- Spring Security + JWT + RBAC
-- 文档上传、解析、分块、版本、分类与标签
-- LangChain4j 模型适配与 Redis Stack 向量检索
-- Redis 会话记忆与回答缓存
-- 加权 RRF 混合检索、严格知识库证据约束
-- SSE 流式问答
-- MySQL、Redis、Prometheus、Grafana 的 Docker 环境
-- Vue 3 + TypeScript 管理前端
+- Java 21 + Spring Boot 后端。
+- 用户登录和接口权限检查。
+- 文档上传、解析、分段、版本、分类与标签。
+- 根据问题搜索相关文档，再让大模型根据文档回答。
+- 保存最近对话和短期回答缓存。
+- 同时使用语义搜索和关键词搜索，并合并两份排名。
+- 回答可以逐步推送到前端。
+- MySQL、Redis、Docker 和 Vue 管理页面。
 
 ## 当前不宣称具备
 
-- 生产级 Agent Loop、工具注册与工具执行策略
-- 文档级/知识空间级检索权限隔离
-- 可靠的异步入库任务、失败恢复与向量/数据库一致性
-- 完整引用链、RAGAS 类评测或可信幻觉检测
-- MCP/A2A 协议实现
+- 让大模型自己选择并反复调用工具。
+- 在搜索时严格排除当前用户无权查看的文档。
+- 可重试、可恢复的后台文档处理任务。
+- 回答精确引用到某篇文档的某个段落。
+- MCP 或正式的多 Agent 通信。
 
-这些不是藏起来的缺陷，而是本项目的二次开发主线。详见 [上游审计](docs/01-upstream-audit.md) 和 [14 天路线](docs/03-secondary-development-roadmap.md)。
+这些不是藏起来的缺陷，而是本项目的二次开发主线。详见 [上游审计](docs/01-upstream-audit.md) 和 [功能模块与工作量预估](docs/03-secondary-development-roadmap.md)。
 
 ## 最小启动
 
-要求：JDK 21、Docker Desktop、Node.js 22+。
+要求：JDK 21、Docker Desktop、Node.js 22+。运行 Maven 前先用 `java -version` 确认当前终端确实是 JDK 21；本项目当前依赖的 Hibernate 增强插件不能直接使用 JDK 25 构建。
 
 ```powershell
 # 1. 只启动开发所需基础设施
@@ -78,7 +79,12 @@ AgentController
   -> AgentLoop <-> LLM
        | tool_calls
        v
-     ToolRegistry -> KnowledgeSearchTool / DocumentTool / MCPTool
+     ToolRegistry -> KnowledgeSearchTool
+                  |     -> 计算当前用户可访问范围
+                  |     -> Redis 在权限范围内做向量搜索
+                  |     -> Elasticsearch 用相同范围做关键词搜索
+                  |     -> 合并排名并再次校验权限
+                  -> DocumentTool / MCPTool
   -> AgentRunTrace -> SSE
 ```
 

@@ -1,73 +1,141 @@
-# 第一阶段学习任务：可靠文档入库
+# 文档入库部分：修好文档上传
 
-这一阶段先不写 Agent。原因不是降低目标，而是文档入库任务和 Agent Run 具有同一类后端问题：创建任务、状态迁移、后台执行、失败恢复、幂等和进度查询。先在边界更清楚的入库链练会，之后写 Agent 生命周期会顺很多。
+这一部分先学习一条后端业务链，不写 Agent。
 
-## 本阶段目标
+原因是“后台处理文档”和“Agent 执行任务”都需要解决同一类问题：任务现在做到哪一步、失败在哪里、能不能重试、重复执行会不会产生脏数据。
 
-把当前实验性的：
+## 1. 用户眼中的上传过程
 
-```text
-Controller -> DocumentProcessingService.uploadFileAsync
-           -> 同对象 processFileAsync(@Async)
-           -> MultipartFile
-```
-
-改成：
+用户希望看到：
 
 ```text
-Controller
- -> IngestionApplicationService.createJob(file)
-    -> FileStorage.save(file)             // 先获得稳定文件地址
-    -> IngestionJobRepository.save(job)   // PENDING
-    -> IngestionJobDispatcher.dispatch(jobId)
- -> 202 Accepted + jobId
-
-独立 worker bean
- -> load(jobId)
- -> 状态机校验
- -> parse -> persist document -> chunk -> embed
- -> COMPLETED / FAILED
+选择文件
+ -> 点击上传
+ -> 很快得到任务编号
+ -> 页面显示：等待处理
+ -> 页面显示：正在解析
+ -> 页面显示：正在生成向量
+ -> 完成，或者显示失败原因
 ```
 
-## 第一性原理：每个模块为什么存在
+如果解析一个大 PDF 需要 30 秒，接口不应该让浏览器一直干等 30 秒。
 
-| 模块 | 输入 | 输出 | 存在原因 |
-|---|---|---|---|
-| Controller | Multipart HTTP 请求 | `202 + jobId` | 处理协议，不承载后台业务流程 |
-| FileStorage | `MultipartFile` | 稳定的 `StoredFile` | 请求结束后临时文件可能失效 |
-| ApplicationService | 上传命令 | 已持久化任务 | 编排创建任务这个用例 |
-| Dispatcher | `jobId` | 提交结果 | 隔离线程/消息系统，不传大对象 |
-| Worker | `jobId` | 状态变化和业务数据 | 独立 Bean，确保经过 Spring 代理 |
-| StateMachine | 当前状态 + 目标状态 | 允许/拒绝 | 防止非法迁移和重复执行 |
-| Repository | job 查询/保存 | 持久化 job | 进程重启后仍可查询和恢复 |
+## 2. 当前代码的问题
 
-## 先读这 6 个文件
+当前大致流程是：
 
-按顺序读，不需要先看全部实体：
+```text
+FileUploadController 收到文件
+ -> 调用 DocumentProcessingService.uploadFileAsync
+ -> 这个方法又直接调用同一个对象的 processFileAsync
+```
 
-1. `FileUploadController.java`：HTTP 输入输出和权限入口。
-2. `DocumentProcessingService.java`：当前错误编排集中在哪里。
-3. `AsyncConfig.java`：`@Async("taskExecutor")` 依赖哪个 Bean。
-4. `UploadProgress.java`：已有状态能否承担可靠任务语义。
-5. `UploadProgressRepository.java`：持久化边界。
-6. `DocumentChunkService.java`：worker 最终要调用的重业务步骤。
+`processFileAsync` 虽然写了 `@Async`，但可能仍然在原线程执行。
 
-## 你先手敲的最小代码
+为什么？
 
-第一小步只写类型，不写线程和文件解析：
+Spring 实现异步时，会在真正的 Service 外面包一层“代理”：
 
-1. `IngestionJobStatus` 枚举。
-2. `IngestionJob` 的最小字段：`id`、`jobId`、`status`、`storedPath`、`originalFileName`、`attempts`、`errorMessage`、时间字段、乐观锁版本。
-3. `canTransitionTo(next)` 或独立状态迁移规则。
-4. 状态迁移单元测试，至少覆盖正常路径、终态不可继续、FAILED 重试和非法跳级。
+```text
+外部调用者 -> Spring 代理 -> 真正的 Service
+                 |
+                 -> 发现 @Async，切换到后台线程
+```
 
-暂时不要写：MQ、分布式锁、分库分表、复杂领域事件。单机持久化任务 + 独立 worker 足够形成最小可靠版本。
+但一个 Service 直接调用自己的另一个方法时，执行路线是：
 
-## 开始写代码前回答 4 个问题
+```text
+真正的 Service -> 自己的另一个方法
+```
 
-1. 为什么 Controller 不能把 `MultipartFile` 直接交给后台线程？
-2. 为什么把 `processFileAsync` 移到独立 Bean 后 `@Async` 才可靠生效？
-3. `COMPLETED` 和 `FAILED` 哪些是终态；FAILED 重试是回到 PENDING 还是新增 attempt？
-4. MySQL 文档写成功、Redis 向量写失败时，job 应是什么状态，如何再次执行而不重复创建文档？
+它没有再次经过外面的 Spring 代理，所以异步功能可能不生效。这叫“同类内部调用绕过代理”。
 
-下一轮先讨论你的答案和状态机草图，再由你手敲第一组类型。
+第二个问题是 `MultipartFile`。它表示本次 HTTP 上传中的文件，底层可能使用临时文件。请求结束后，临时文件可能被清理，所以不能直接把它交给长期运行的后台线程。
+
+## 3. 我们要改成什么样
+
+```text
+Controller 收到 MultipartFile
+ -> 先把文件复制到自己管理的稳定目录
+ -> 在 MySQL 创建任务记录
+ -> 返回 jobId（任务编号）
+
+独立的后台 Service
+ -> 根据 jobId 查询任务
+ -> 根据稳定文件路径读取文件
+ -> 解析、分段、生成向量
+ -> 每一步更新 MySQL 中的任务状态
+```
+
+为什么后台模块只接收 `jobId`？
+
+- `jobId` 很小，在线程之间传递简单。
+- 后台模块可以随时从数据库重新读取任务。
+- 即使应用中途重启，任务记录还在。
+- 不依赖已经结束的 HTTP 请求对象。
+
+## 4. 任务需要哪些状态
+
+第一版先使用下面这些状态：
+
+| 状态 | 白话含义 |
+|---|---|
+| `PENDING` | 已创建任务，还没开始 |
+| `PARSING` | 正在从文件提取文字 |
+| `CHUNKING` | 正在把长文档切成小段 |
+| `EMBEDDING` | 正在把段落转换成向量并保存 |
+| `COMPLETED` | 全部成功 |
+| `FAILED` | 某一步失败，并保存失败原因 |
+
+正常路线：
+
+```text
+PENDING -> PARSING -> CHUNKING -> EMBEDDING -> COMPLETED
+```
+
+中间任何一步发生异常，都可以进入 `FAILED`。
+
+这套“哪些状态可以变到哪些状态”的规则叫状态机。它首先是一组业务规则，不是必须引入某个复杂框架。
+
+## 5. 第一天只读三个文件
+
+### `FileUploadController.java`
+
+关注点：上传接口收到什么参数，返回什么结果，接下来调用谁。
+
+### `DocumentProcessingService.java`
+
+关注点：`uploadFileAsync()` 和 `processFileAsync()` 为什么在同一个类里会有问题。
+
+### `UploadProgress.java`
+
+关注点：原项目已经保存了哪些任务状态和进度字段。
+
+其他文件先不要展开。
+
+## 6. 第一个手敲任务
+
+第一步只写 `IngestionJobStatus` 枚举，不创建数据库表、不写线程：
+
+```java
+public enum IngestionJobStatus {
+    PENDING,
+    PARSING,
+    CHUNKING,
+    EMBEDDING,
+    COMPLETED,
+    FAILED
+}
+```
+
+然后思考：是否允许直接从 `PENDING` 跳到 `COMPLETED`？是否允许从 `COMPLETED` 回到 `PARSING`？
+
+下一步才会给枚举增加“能否进入下一个状态”的判断，并为状态变化写测试。
+
+## 7. 写代码前先回答三个问题
+
+1. 为什么接口不能一直等到 PDF 解析和向量生成全部完成？
+2. 为什么后台代码不应该直接保存并长期使用 `MultipartFile`？
+3. 为什么 `processFileAsync()` 放在独立的 Spring Service 后，更容易让 `@Async` 生效？
+
+下一轮我们先根据当前代码回答这三个问题，再由你创建枚举文件。我不会直接生成整个入库模块。
