@@ -49,7 +49,7 @@ COPY --from=builder /build/target/dependency/META-INF /app/META-INF
 COPY --from=builder /build/target/dependency/BOOT-INF/classes /app
 
 # 修改所有者为 spring 用户
-RUN chown -R spring:spring /app
+RUN mkdir -p /app/data/ingestion && chown -R spring:spring /app
 
 # 切换到非 root 用户
 USER spring:spring

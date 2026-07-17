@@ -57,6 +57,11 @@ spring:
       max-file-size: 10MB
       max-request-size: 10MB
 
+# 文档入库配置
+app:
+  ingestion:
+    storage-dir: ${INGESTION_STORAGE_DIR:./data/ingestion}
+
 # 日志配置
 logging:
   level:

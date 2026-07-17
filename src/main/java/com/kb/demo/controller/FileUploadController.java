@@ -179,8 +179,7 @@ public class FileUploadController {
     }
     
     /**
-     * 实验性异步上传文件。
-     * TODO（二开阶段 1）：修复同类方法调用导致 @Async 不生效，以及请求临时文件跨线程生命周期问题。
+     * 异步受理文档上传任务。
      * @param file 上传的文件
      * @return 上传ID，用于查询进度
      */
@@ -205,7 +204,7 @@ public class FileUploadController {
             result.put("message", "文件上传开始，请使用uploadId查询进度");
             result.put("statusUrl", "/api/files/upload-progress/" + uploadId);
             
-            return ResponseEntity.ok(result);
+            return ResponseEntity.accepted().body(result);
             
         } catch (Exception e) {
             logger.error("文件上传失败", e);

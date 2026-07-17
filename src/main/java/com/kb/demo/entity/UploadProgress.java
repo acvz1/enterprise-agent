@@ -16,7 +16,7 @@ public class UploadProgress {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     
-    @Column(nullable = false)
+    @Column(nullable = false, unique = true, length = 36)
     private String uploadId;  // 唯一上传ID
     
     @Column(nullable = false)
@@ -129,6 +129,7 @@ public class UploadProgress {
      * 上传状态枚举
      */
     public enum UploadStatus {
+        PENDING("等待处理"),
         UPLOADING("上传中"),
         PARSING("解析中"),
         CHUNKING("分块中"),

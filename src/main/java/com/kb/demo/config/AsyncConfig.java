@@ -44,8 +44,8 @@ public class AsyncConfig {
         // 应用关闭时，是否等待所有任务完成
         executor.setWaitForTasksToCompleteOnShutdown(true);
         
-        // 拒绝策略：使用调用者所在线程执行任务
-        executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
+        // 队列满时明确拒绝，避免异步任务退化为 HTTP 请求线程同步执行
+        executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
         
         executor.initialize();
         

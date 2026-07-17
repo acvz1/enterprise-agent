@@ -9,6 +9,7 @@ import org.apache.tika.parser.Parser;
 import org.apache.tika.sax.BodyContentHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.io.InputStreamSource;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.xml.sax.SAXException;
@@ -16,6 +17,8 @@ import org.xml.sax.SAXException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -44,29 +47,49 @@ public class FileParseService {
      * @return 包含文件内容和元数据的Map
      */
     public Map<String, String> parseFile(MultipartFile file) {
+        return parseFile(file.getOriginalFilename(), file.getContentType(), file);
+    }
+
+    /**
+     * Parses a source file that has already been copied to durable storage.
+     */
+    public Map<String, String> parseFile(Path storedFile, String originalFilename) {
+        try {
+            String contentType = tika.detect(storedFile);
+            return parseFile(
+                    originalFilename,
+                    contentType,
+                    () -> Files.newInputStream(storedFile));
+        } catch (IOException e) {
+            throw new IllegalStateException("读取已保存文件失败", e);
+        }
+    }
+
+    private Map<String, String> parseFile(
+            String originalFilename,
+            String contentType,
+            InputStreamSource inputStreamSource) {
         Map<String, String> result = new HashMap<>();
         
         try {
-            // 获取文件名和内容类型
-            String originalFilename = file.getOriginalFilename();
-            String contentType = file.getContentType();
-            
             logger.info("开始解析文件: {}, 类型: {}", originalFilename, contentType);
             
             // 判断文件类型，特殊处理 Markdown
             String content;
             if (originalFilename != null && originalFilename.toLowerCase().endsWith(".md")) {
-                // 直接读取 Markdown 文件内容（UTF-8）
-                content = new String(file.getBytes(), StandardCharsets.UTF_8);
+                try (InputStream stream = inputStreamSource.getInputStream()) {
+                    content = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+                }
                 logger.info("Markdown 文件直接读取，内容长度: {}", content.length());
             } else {
-                // 使用 Tika 解析其他文件格式
-                content = tika.parseToString(file.getInputStream());
+                try (InputStream stream = inputStreamSource.getInputStream()) {
+                    content = tika.parseToString(stream);
+                }
             }
             
             // 获取文件元数据
             Metadata metadata = new Metadata();
-            try (InputStream stream = file.getInputStream()) {
+            try (InputStream stream = inputStreamSource.getInputStream()) {
                 Parser parser = new AutoDetectParser();
                 parser.parse(stream, new BodyContentHandler(), metadata, new ParseContext());
             } catch (Exception e) {
@@ -111,7 +134,7 @@ public class FileParseService {
             return false;
         }
         
-        String extension = originalFilename.substring(originalFilename.lastIndexOf(".") + 1).toLowerCase();
+        String extension = extensionOf(originalFilename);
         
         // 支持的文件类型：添加 md（Markdown）
         return switch (extension) {
@@ -129,13 +152,16 @@ public class FileParseService {
         if (file == null || file.isEmpty()) {
             return "未知类型";
         }
-        
-        String originalFilename = file.getOriginalFilename();
+
+        return getFileTypeDescription(file.getOriginalFilename());
+    }
+
+    public String getFileTypeDescription(String originalFilename) {
         if (originalFilename == null) {
             return "未知类型";
         }
         
-        String extension = originalFilename.substring(originalFilename.lastIndexOf(".") + 1).toLowerCase();
+        String extension = extensionOf(originalFilename);
         
         return switch (extension) {
             case "pdf" -> "PDF文档";
@@ -149,5 +175,13 @@ public class FileParseService {
             case "md" -> "Markdown文档";
             default -> "未知类型";
         };
+    }
+
+    private String extensionOf(String filename) {
+        int dotIndex = filename.lastIndexOf('.');
+        if (dotIndex < 0 || dotIndex == filename.length() - 1) {
+            return "";
+        }
+        return filename.substring(dotIndex + 1).toLowerCase();
     }
 }

@@ -61,6 +61,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      INGESTION_STORAGE_DIR: /app/data/ingestion
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       KIMI_API_KEY: ${KIMI_API_KEY:-}
@@ -70,6 +71,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - document-data:/app/data/ingestion
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
       interval: 30s
@@ -124,3 +127,4 @@ volumes:
   redis-data:
   prometheus-data:
   grafana-data:
+  document-data:
