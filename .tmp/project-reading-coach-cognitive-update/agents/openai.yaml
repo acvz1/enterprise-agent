@@ -1,0 +1,6 @@
+interface:
+  display_name: "Project Reading Coach"
+  short_description: "First-principles code learning, one concept at a time"
+  default_prompt: "Use $project-reading-coach to derive one unfamiliar code concept from first principles, let me keep asking questions, then test my understanding with a Feynman restatement."
+policy:
+  allow_implicit_invocation: true
