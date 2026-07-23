@@ -1,11 +1,15 @@
 package com.kb.demo.service;
 
+import com.kb.demo.dto.RetrievalCandidate;
+import com.kb.demo.dto.RetrievalHit;
 import com.kb.demo.entity.Document;
 import com.kb.demo.entity.DocumentChunk;
 import com.kb.demo.repository.DocumentChunkRepository;
 import com.kb.demo.repository.DocumentRepository;
+import com.kb.demo.dto.RetrievalSource;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
@@ -28,6 +32,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.Optional;
 
 /**
  * 向量检索服务类
@@ -165,6 +170,80 @@ public class VectorSearchService {
             logger.warn("⚠️ [关键词检索] 回退到关键词检索模式");
             return keywordSearch(query, maxResults);
         }
+    }
+
+    /**
+     * Redis chunk级检索
+     * @param query 查询文本
+     * @param maxResults 最大结果数量
+     * @param minScore 最小相似度阈值
+     * @return 匹配切片列表
+     */
+    public List<RetrievalCandidate> searchVectorCandidates(String query,int maxResults,double minScore){
+        try {
+            // 创建嵌入模型
+            EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
+            logger.debug("嵌入模型创建成功");
+            
+            // 创建Redis向量存储，使用配置文件中的Redis地址
+            logger.info("正在连接Redis Stack向量存储: {}:{}", redisHost, redisPort);
+            EmbeddingStore<TextSegment> embeddingStore = RedisEmbeddingStore.builder()
+                    .host(redisHost)
+                    .port(redisPort)
+                    .dimension(EMBEDDING_DIMENSION)
+                    .indexName("document-embeddings")
+                    .metadataKeys(List.of("documentId", "chunkIndex"))
+                    .build();
+            logger.info("Redis Stack向量存储创建成功");
+            
+            // 将查询文本转换为向量
+            Embedding queryEmbedding = embeddingModel.embed(query).content();
+            logger.debug("查询文本向量化完成，维度: {}", queryEmbedding.dimension());
+            
+            // 创建检索请求，确保设置maxResults参数
+            EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
+                    .queryEmbedding(queryEmbedding)
+                    .maxResults(maxResults)
+                    .minScore(minScore)
+                    .build();
+            logger.debug("检索请求创建完成，maxResults: {}, minScore: {}", maxResults, minScore);
+            
+            // 执行检索
+            EmbeddingSearchResult<TextSegment> result = embeddingStore.search(request);
+            logger.info("✅ [向量检索] Redis向量检索执行完成，结果数量: {}", result.matches().size());
+
+            //将matches转成candidates
+            List<RetrievalCandidate> candidates=new ArrayList<>();
+            List<EmbeddingMatch<TextSegment>> matches=result.matches();
+            for (int index = 0; index < matches.size(); index++) {
+                RetrievalCandidate candidate=toRetrievalCandidate(matches.get(index), index+1);
+                if(candidate!=null)candidates.add(candidate);
+            }
+            return candidates;
+        }catch(Exception e){
+            logger.error("Reddis 向量候选检索失败",e);
+            return List.of();
+        }
+    }
+
+    /**
+     * 先match结果转成RetrievalCandidate对象
+     * @param match 
+     * @param rank
+     * @return
+     */
+    private RetrievalCandidate toRetrievalCandidate(EmbeddingMatch<TextSegment> match,int rank){
+        // 取得命中TextSegment
+        TextSegment textSegment=match.embedded();
+        if(textSegment==null)return null;
+        // 取得分块元数据
+        Metadata metadata=textSegment.metadata();
+        if(metadata==null||!metadata.containsKey("documentId")||!metadata.containsKey("chunkIndex"))return null;
+        Long docId=metadata.getLong("documentId");
+        Integer chunkIndex=metadata.getInteger("chunkIndex");
+        // 组装RerievalCandidate对象
+        return new RetrievalCandidate(docId,chunkIndex,match.score(),rank,RetrievalSource.REDIS_VECTOR);
+
     }
     
     /**

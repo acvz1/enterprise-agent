@@ -10,6 +10,7 @@ import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.redis.RedisEmbeddingStore;
+import dev.langchain4j.data.document.Metadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -121,6 +122,7 @@ public class DocumentChunkService {
                 .port(redisPort)
                 .dimension(384) // AllMiniLmL6V2EmbeddingModel的向量维度
                 .indexName("document-embeddings") // 指定索引名称，与VectorSearchService一致
+                .metadataKeys(List.of("documentId", "chunkIndex"))
                 .build();
         
         logger.info("✅ [向量存储] 连接Redis向量存储成功: {}:{}, 索引: document-embeddings", redisHost, redisPort);
@@ -131,9 +133,15 @@ public class DocumentChunkService {
             
             // 使用原生SQL插入，避免Hibernate字节码增强问题
             documentChunkRepository.insertChunk(docId, i, segment.text());
-            
+
+            // 添加元数据标识
+            Metadata metadata=new Metadata()
+                                .put("documentId",docId)
+                                .put("chunkIndex",i);
+            TextSegment indexedSegment=TextSegment.from(segment.text(),metadata);
+
             // 将文档块添加到向量存储
-            String embeddingId = embeddingStore.add(embeddingModel.embed(segment.text()).content(), segment);
+            String embeddingId = embeddingStore.add(embeddingModel.embed(indexedSegment.text()).content(), indexedSegment);
             
             if (i == 0) {
                 logger.debug("✅ [向量存储] 第一个块向量化成功，ID: {}", embeddingId);
@@ -220,7 +228,7 @@ public class DocumentChunkService {
     /**
      * 全量重建向量索引（清理孤立数据）
      * 警告：此操作会清空Redis中的所有向量数据并重新生成，耗时较长
-     * @return 重建的文档数量
+     * @return 重建的文档块数量
      */
     @Transactional
     public int rebuildAllVectorIndex() {
@@ -253,13 +261,13 @@ public class DocumentChunkService {
             
             // 3. 重新处理所有文档
             logger.info("[3/3] 重新处理所有文档...");
-            int totalDocuments = processAllDocuments();
+            int totalChunks = processAllDocuments();
             
             logger.info("========================================");
-            logger.info("✅ 全量重建完成！共处理 {} 个文档", totalDocuments);
+            logger.info("✅ 全量重建完成！共处理 {} 个文档块", totalChunks);
             logger.info("========================================");
             
-            return totalDocuments;
+            return totalChunks;
         } catch (Exception e) {
             logger.error("全量重建向量索引失败", e);
             throw new RuntimeException("全量重建向量索引失败: " + e.getMessage(), e);

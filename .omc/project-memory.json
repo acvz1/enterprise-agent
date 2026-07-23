@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1784250916037,
+  "lastScanned": 1784468709348,
   "projectRoot": "d:\\Project\\enterprise-agent",
   "techStack": {
     "languages": [
@@ -37,7 +37,10 @@
       "docs",
       "src"
     ],
-    "gitBranches": null
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
   },
   "customNotes": [],
   "directoryMap": {
@@ -45,7 +48,7 @@
       "path": "ai-assistant-front",
       "purpose": null,
       "fileCount": 15,
-      "lastAccessed": 1784250915760,
+      "lastAccessed": 1784468709147,
       "keyFiles": [
         "env.d.ts",
         "eslint.config.ts",
@@ -58,7 +61,7 @@
       "path": "docker",
       "purpose": null,
       "fileCount": 2,
-      "lastAccessed": 1784250915760,
+      "lastAccessed": 1784468709148,
       "keyFiles": [
         "docker-compose.yml",
         "Dockerfile"
@@ -68,7 +71,7 @@
       "path": "docs",
       "purpose": "Documentation",
       "fileCount": 8,
-      "lastAccessed": 1784250915762,
+      "lastAccessed": 1784468709149,
       "keyFiles": [
         "00-start-here.md",
         "01-upstream-audit.md",
@@ -81,7 +84,7 @@
       "path": "mysql",
       "purpose": null,
       "fileCount": 3,
-      "lastAccessed": 1784250915763,
+      "lastAccessed": 1784468709150,
       "keyFiles": [
         "02-add-evaluation-tables.sql",
         "add-file-type-column.sql",
@@ -92,14 +95,14 @@
       "path": "src",
       "purpose": "Source code",
       "fileCount": 0,
-      "lastAccessed": 1784250915764,
+      "lastAccessed": 1784468709151,
       "keyFiles": []
     },
     "target": {
       "path": "target",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1784250915766,
+      "lastAccessed": 1784468709151,
       "keyFiles": [
         "jacoco.exec"
       ]
@@ -108,7 +111,7 @@
       "path": "ai-assistant-front\\dist",
       "purpose": "Distribution/build output",
       "fileCount": 2,
-      "lastAccessed": 1784250915768,
+      "lastAccessed": 1784468709152,
       "keyFiles": [
         "favicon.ico",
         "index.html"
@@ -118,14 +121,14 @@
       "path": "ai-assistant-front\\node_modules",
       "purpose": "Dependencies",
       "fileCount": 1,
-      "lastAccessed": 1784250915773,
+      "lastAccessed": 1784468709155,
       "keyFiles": []
     },
     "src\\test": {
       "path": "src\\test",
       "purpose": "Test files",
       "fileCount": 0,
-      "lastAccessed": 1784250915778,
+      "lastAccessed": 1784468709159,
       "keyFiles": []
     }
   },

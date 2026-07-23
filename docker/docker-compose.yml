@@ -44,6 +44,27 @@ services:
       start_period: 10s
     networks: [agent-network]
 
+  elasticsearch:
+    image: elastic.m.daocloud.io/elasticsearch/elasticsearch:8.10.4
+    container_name: enterprise-agent-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      TZ: Asia/Shanghai
+    ports:
+      - "${ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    networks: [agent-network]
+
   app:
     profiles: [full]
     build:
@@ -125,6 +146,7 @@ networks:
 volumes:
   mysql-data:
   redis-data:
+  elasticsearch-data:
   prometheus-data:
   grafana-data:
   document-data:

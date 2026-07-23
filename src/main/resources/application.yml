@@ -42,6 +42,10 @@ spring:
           min-idle: 0
           max-wait: -1ms
   
+  # Elasticsearch 配置
+  elasticsearch:
+    uris: ${ELASTICSEARCH_URIS:http://localhost:9200}
+  
   # MVC配置
   mvc:
     cors:
@@ -111,6 +115,7 @@ jwt:
   secret: ai-knowledge-base-secret-key-minimum-256-bits-required-for-hs256-algorithm
   expiration: 86400000  # 24小时（毫秒）
   refresh-expiration: 604800000  # 7天（毫秒）
+
 
 # Spring Boot Actuator 监控配置
 management:
