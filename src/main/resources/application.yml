@@ -90,7 +90,7 @@ langchain4j:
   deepseek:
     apiKey: ${DEEPSEEK_API_KEY}
     baseUrl: https://api.deepseek.com
-    modelName: deepseek-chat
+    modelName: deepseek-v4-flash
   
   # Kimi（月之暗面）配置
   kimi:
