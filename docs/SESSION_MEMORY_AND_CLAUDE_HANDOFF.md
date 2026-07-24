@@ -9,6 +9,53 @@
 
 下一位协作者应先读完本文件，再决定是否读取旧规划文档。若本文件与旧规划冲突，以用户最新指令和本文件记录的边界为准。
 
+> 2026-07-23 更新：本文件后面的旧快照保留历史背景，但当前协作规则以项目根目录 `AGENTS.md` 为准，当前排期和开发断点以 `docs/04-six-day-core-plan.md` 为准。
+
+### 2026-07-23 最新工作断点
+
+```text
+产品方向：
+Redis 向量候选 + Elasticsearch BM25 候选
+  -> RRF 融合
+  -> Top K 后批量查询 MySQL
+  -> RetrievalHit
+  -> RAG/Agent 使用 chunk 证据并返回引用
+
+已完成并真实验证：
+  Redis RetrievalCandidate 独立链路
+  Elasticsearch BM25 RetrievalCandidate 独立链路
+
+Day 2 已写但未完成正式运行验证：
+  Elasticsearch Bulk 批量写入及局部失败检查
+  DocumentChunkService 收集并批量同步 ES chunk
+  deleteByDocumentId() 使用 deleteByQuery + term(documentId)
+
+恢复后的第一步：
+  在 processDocumentWithProgress() 的 indexChunks() 之前，
+  每篇文档调用一次 deleteByDocumentId(docId)；
+  不能放入逐 chunk 循环。
+
+之后：
+  文档删除/全量重建同步 ES
+  -> RRF 去重与融合
+  -> 第 2 天真实运行验收
+```
+
+最新带学规则：
+
+```text
+先用一句人话说明动作
+  -> 一个不做的后果
+  -> 一个精确代码位置
+  -> 用户确认后再补 API、边界和验收
+
+陌生第三方 API：
+先读官方 REST/JSON 请求
+  -> 再看 Java 调用外壳
+  -> 根据项目数据模型修改示例
+  -> 最后从 Response 推导返回值
+```
+
 ## 1. 当前状态快照
 
 ~~~text

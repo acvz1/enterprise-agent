@@ -9,6 +9,7 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * 文档块数据访问层
@@ -86,4 +87,21 @@ public interface DocumentChunkRepository extends JpaRepository<DocumentChunk, Lo
     void insertChunk(@Param("documentId") Long documentId, 
                     @Param("chunkIndex") Integer chunkIndex, 
                     @Param("content") String content);
+
+    /**
+     * 批量查询DocumentChunk同时取回所属Document
+     * @param documentIds 文档Id集合
+     * @param chunkIndexes 切片索引集合
+     * @return 文档切片集合
+     */
+    @Query("""
+    SELECT dc
+    FROM DocumentChunk dc
+    JOIN FETCH dc.document d
+    WHERE d.id IN :documentIds
+      AND dc.chunkIndex IN :chunkIndexes
+    """)
+    List<DocumentChunk> findCandidateChunksWithDocument(
+        @Param("documentIds") Set<Long> documentIds,
+        @Param("chunkIndexes") Set<Integer> chunkIndexes);
 }

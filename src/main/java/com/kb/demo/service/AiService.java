@@ -1,9 +1,9 @@
 package com.kb.demo.service;
 
 import com.kb.demo.config.ModelConfig;
-import com.kb.demo.entity.Document;
+
 import com.kb.demo.entity.SessionMessage;
-import com.kb.demo.repository.DocumentRepository;
+import com.kb.demo.dto.RetrievalHit;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.chat.StreamingChatLanguageModel;
@@ -11,7 +11,6 @@ import dev.langchain4j.model.output.Response;
 import dev.langchain4j.model.StreamingResponseHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -32,30 +31,31 @@ import java.util.HashMap;
 public class AiService {
 
     private static final Logger logger = LoggerFactory.getLogger(AiService.class);
-    
-    @Autowired
-    private ModelFactory modelFactory;
-    
-    @Autowired
-    private ModelConfig modelConfig;
-    
-    @Autowired
-    private DocumentRepository documentRepository;
 
-    @Autowired
-    private RedisTemplate<String, String> redisTemplate;
-    
-    @Autowired
-    private VectorSearchService vectorSearchService;
-    
-    @Autowired
-    private ChatMemoryStore chatMemoryStore;
-    
-    @Autowired
-    private ResponseEvaluationService responseEvaluationService;
-    
-    @Autowired
-    private AnalyticsService analyticsService;
+    private final ModelFactory modelFactory;
+    private final ModelConfig modelConfig;
+    private final RedisTemplate<String, String> redisTemplate;
+    private final HybridRetrievalService hybridRetrievalService;
+    private final ChatMemoryStore chatMemoryStore;
+    private final ResponseEvaluationService responseEvaluationService;
+    private final AnalyticsService analyticsService;
+
+    public AiService(
+            ModelFactory modelFactory,
+            ModelConfig modelConfig,
+            RedisTemplate<String, String> redisTemplate,
+            HybridRetrievalService hybridRetrievalService,
+            ChatMemoryStore chatMemoryStore,
+            ResponseEvaluationService responseEvaluationService,
+            AnalyticsService analyticsService) {
+        this.modelFactory = modelFactory;
+        this.modelConfig = modelConfig;
+        this.redisTemplate = redisTemplate;
+        this.hybridRetrievalService = hybridRetrievalService;
+        this.chatMemoryStore = chatMemoryStore;
+        this.responseEvaluationService = responseEvaluationService;
+        this.analyticsService = analyticsService;
+    }
 
     public Map<String, Object> askQuestion(String question, String sessionId) {
         return askQuestion(question, sessionId, modelConfig.getDefaultModel());
@@ -65,19 +65,27 @@ public class AiService {
         // 生成缓存键
         String cacheKey = "ai:answer:" + sessionId + ":" + question.hashCode() + ":" + modelName;
         
+        // 使用混合检索获取RRF TopK分块
+        List<RetrievalHit> relevantHits;
+        try{
+            relevantHits=hybridRetrievalService.searchHits(question, 10, 0.5, 5);
+        }catch(IOException e){
+            throw new IllegalStateException("混合检索失败",e);
+        }
+
         // 尝试从缓存获取答案
         String cachedAnswer = redisTemplate.opsForValue().get(cacheKey);
         if (cachedAnswer != null) {
-            return Map.of("answer", cachedAnswer, "fromCache", true, "model", modelName);
+            return Map.of("answer", cachedAnswer, "fromCache", true, "model", modelName,"citations",relevantHits);
         }
-        
-        // 使用向量检索获取相关文档
-        List<Document> relevantDocuments = vectorSearchService.searchDocuments(question);
+    
         
         // 构建上下文
-        String context = relevantDocuments.stream()
-                .map(doc -> "标题: " + doc.getTitle() + "\n内容: " + doc.getContent())
-                .collect(Collectors.joining("\n\n"));
+        String context = relevantHits.stream()
+        .map(hit -> "标题: " + hit.getDocumentTitle()
+                + "\n分块: " + hit.getChunkIndex()
+                + "\n内容: " + hit.getContent())
+        .collect(Collectors.joining("\n\n"));
         
         // 构建提示词
         String prompt = "请仅根据以下知识库内容回答问题。若证据不足，请明确说明知识库中没有足够信息，不要使用模型自身知识补充事实。\n\n" +
@@ -93,7 +101,7 @@ public class AiService {
         // 将答案存入缓存，有效期5分钟
         redisTemplate.opsForValue().set(cacheKey, answer, 5, TimeUnit.MINUTES);
         
-        return Map.of("answer", answer, "fromCache", false, "model", modelName);
+        return Map.of("answer", answer, "fromCache", false, "model", modelName,"citations",relevantHits);
     }
 
     public void askQuestionStream(String question, String sessionId, SseEmitter emitter) throws IOException {
@@ -106,6 +114,9 @@ public class AiService {
         // 生成缓存键
         String cacheKey = "ai:answer:" + sessionId + ":" + question.hashCode() + ":" + modelName;
         logger.debug("缓存键: {}", cacheKey);
+
+        // 使用混合检索获取RRF TopK分块
+        List<RetrievalHit> relevantHits =hybridRetrievalService.searchHits(question, 10, 0.5, 5);
         
         // 尝试从缓存获取答案
         String cachedAnswer = redisTemplate.opsForValue().get(cacheKey);
@@ -127,7 +138,7 @@ public class AiService {
             }
             emitter.send(SseEmitter.event()
                     .name("metadata")
-                    .data(Map.of("fromCache", true, "model", modelName)));
+                    .data(Map.of("fromCache", true, "model", modelName,"citations",relevantHits)));
             emitter.complete();
             return;
         }
@@ -135,14 +146,10 @@ public class AiService {
         // 记录缓存未命中
         analyticsService.recordCacheMiss();
         
-        // 获取知识库中的所有文档
-        List<Document> relevantDocuments = vectorSearchService.searchDocuments(question);
-        logger.info("从向量检索获取到 {} 个相关文档", relevantDocuments.size());
-        
-        // 改进逆辑：只有当有质量良好的检索结果时，才使用它们
-        if (relevantDocuments.isEmpty()) {
-            // 如果没有检索结果，也不使用所有文档，这样模型会更严格的恰应约束
-            logger.info("向量检索没有找到相关文档，使用空知识库教模式回答");
+        logger.info("混合检索获取到 {} 个相关分块", relevantHits.size());
+
+        if (relevantHits.isEmpty()) {
+            logger.info("混合检索没有找到相关分块，使用空知识库模式回答");
         }
         
         // 获取会话的最近对话历史（最近3轮）
@@ -150,7 +157,7 @@ public class AiService {
         logger.info("从会话记忆获取到 {} 条消息", recentHistory.size());
         
         // 构建增强的提示词（包含对话历史）
-        String prompt = buildEnhancedPrompt(question, recentHistory, relevantDocuments);
+        String prompt = buildEnhancedPrompt(question, recentHistory, relevantHits);
         logger.debug("构建的提示词: {}", prompt);
         
         // 获取指定流式模型
@@ -218,7 +225,7 @@ public class AiService {
                             answer,
                             modelName,
                             responseTime,  // 传入计算后的响应时间
-                            relevantDocuments.size()   // 检索到的文档数
+                            relevantHits.size()   // 检索到的文档数
                         );
                         
                         // 将评分信息发送给前端
@@ -243,7 +250,7 @@ public class AiService {
                     
                     emitter.send(SseEmitter.event()
                             .name("metadata")
-                            .data(Map.of("fromCache", false, "model", modelName)));
+                            .data(Map.of("fromCache", false, "model", modelName,"citations",relevantHits)));
                     emitter.complete();
                     logger.info("流式请求处理完成");
                 } catch (IOException e) {
@@ -282,7 +289,7 @@ public class AiService {
     private String buildEnhancedPrompt(
         String question,
         List<SessionMessage> recentHistory,
-        List<Document> documents
+        List<RetrievalHit> hits
     ) {
         StringBuilder sb = new StringBuilder();
         
@@ -308,12 +315,13 @@ public class AiService {
         }
         
         // 添加知识库内容 - 仅包含相关性高的内容
-        if (!documents.isEmpty()) {
+        if (!hits.isEmpty()) {
             sb.append("【相关知识库信息】\n");
-            for (int i = 0; i < documents.size(); i++) {
-                Document doc = documents.get(i);
-                sb.append("[").append(i + 1).append("] 标题：").append(doc.getTitle()).append("\n")
-                  .append("内容：").append(truncateContent(doc.getContent(), 1500)).append("\n\n");  // 从 200 增加到 1500
+            for (int i = 0; i < hits.size(); i++) {
+                RetrievalHit hit = hits.get(i);
+                sb.append("[").append(i + 1).append("] 标题：").append(hit.getDocumentTitle()).append("\n")
+                  .append("分块：").append(hit.getChunkIndex()).append("\n")
+                  .append("内容：").append(truncateContent(hit.getContent(), 1500)).append("\n\n");  // 从 200 增加到 1500
             }
         } else {
             sb.append("【相关知识库信息】\n");

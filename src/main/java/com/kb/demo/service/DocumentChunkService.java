@@ -1,5 +1,6 @@
 package com.kb.demo.service;
 
+import com.kb.demo.dto.ElasticsearchChunkDocument;
 import com.kb.demo.entity.Document;
 import com.kb.demo.entity.DocumentChunk;
 import com.kb.demo.repository.DocumentChunkRepository;
@@ -23,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiConsumer;
 import org.springframework.data.redis.core.RedisTemplate;
+import java.io.IOException;
 
 /**
  * 文档分块和向量化服务
@@ -39,6 +41,9 @@ public class DocumentChunkService {
     
     @Autowired
     private RedisTemplate<String, ?> redisTemplate;
+
+    @Autowired
+    private ElasticsearchSearchService elasticsearchSearchService;
     
     @Autowired
     private ApplicationContext applicationContext;
@@ -125,6 +130,10 @@ public class DocumentChunkService {
                 .metadataKeys(List.of("documentId", "chunkIndex"))
                 .build();
         
+        // 同步elasticsearch收集
+        List<ElasticsearchChunkDocument> elasticsearchDocuments=new ArrayList<>();
+    
+
         logger.info("✅ [向量存储] 连接Redis向量存储成功: {}:{}, 索引: document-embeddings", redisHost, redisPort);
         
         // 处理每个文档块
@@ -143,6 +152,9 @@ public class DocumentChunkService {
             // 将文档块添加到向量存储
             String embeddingId = embeddingStore.add(embeddingModel.embed(indexedSegment.text()).content(), indexedSegment);
             
+            // 添加到elasticsearch列表
+            elasticsearchDocuments.add(new ElasticsearchChunkDocument(docId,i,segment.text()));
+
             if (i == 0) {
                 logger.debug("✅ [向量存储] 第一个块向量化成功，ID: {}", embeddingId);
             }
@@ -156,6 +168,17 @@ public class DocumentChunkService {
             }
         }
         
+        try {
+            long deletedCount=elasticsearchSearchService.deleteByDocumentId(docId);
+            elasticsearchSearchService.indexChunks(elasticsearchDocuments);
+            elasticsearchSearchService.refreshIndex();
+        } catch (IOException exception) {
+            throw new IllegalStateException(
+                    "Elasticsearch 文档分块同步失败，documentId=" + docId,
+                    exception
+    );
+}
+
         logger.info("✅ [文档分块] 文档分块和向量化处理完成，文档ID: {}, 共处理 {} 个块", documentId, segments.size());
         return segments.size();
     }
@@ -223,6 +246,17 @@ public class DocumentChunkService {
         // 当前策略：记录日志，忽略Redis孤立向量（它们不会影响检索结果，因为MySQL中已无对应文档）
         // 最佳实践：定期执行全量重建向量索引，清理孤立数据
         logger.warn("⚠️ [Redis] 向量数据未实时删除，文档ID: {}，建议定期执行全量重建", documentId);
+
+        // 3. 从 Elasticsearch 删除分块
+        try {
+            long deletedCount = elasticsearchSearchService.deleteByDocumentId(documentId);
+            logger.debug("✅ [Elasticsearch] 文档分块删除完成，文档ID: {}, 删除 {} 个分块",
+                    documentId, deletedCount);
+        } catch (IOException exception) {
+            throw new IllegalStateException(
+                    "Elasticsearch 文档分块删除失败，documentId=" + documentId,
+                    exception);
+        }
     }
     
     /**

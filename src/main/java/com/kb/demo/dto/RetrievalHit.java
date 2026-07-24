@@ -1,4 +1,5 @@
 package com.kb.demo.dto;
+import java.util.Set;
 
 public class RetrievalHit {
     // 检索命中结果
@@ -7,21 +8,21 @@ public class RetrievalHit {
     private Integer chunkIndex;
     private String documentTitle;
     private String content;
-    private double score;
-    private RetrievalSource source;
+    private double fusionScore;
+    private Set<RetrievalSource> sources;
 
     public RetrievalHit() {
     }
 
     public RetrievalHit(Long documentId, Long chunkId, Integer chunkIndex, String documentTitle, String content,
-            double score, RetrievalSource source) {
+            double fusionScore, Set<RetrievalSource> sources) {
         this.documentId = documentId;
         this.chunkId = chunkId;
         this.chunkIndex = chunkIndex;
         this.documentTitle = documentTitle;
         this.content = content;
-        this.score = score;
-        this.source = source;
+        this.fusionScore = fusionScore;
+        this.sources = sources;
     }
 
     public Long getDocumentId() {
@@ -39,11 +40,11 @@ public class RetrievalHit {
     public String getContent() {
         return content;
     }
-    public double getScore() {
-        return score;
+    public double getFusionScore() {
+        return fusionScore;
     }
-    public RetrievalSource getSource() {
-        return source;
+    public Set<RetrievalSource> getSources() {
+        return sources;
     }
 
 }

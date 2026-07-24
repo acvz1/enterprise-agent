@@ -1,8 +1,10 @@
 package com.kb.demo.service;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch.core.BulkResponse;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.search.Hit;
-
+import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
+import co.elastic.clients.elasticsearch.core.DeleteByQueryResponse;
 import org.springframework.stereotype.Service;
 import com.kb.demo.dto.ElasticsearchChunkDocument;
 import com.kb.demo.dto.RetrievalCandidate;
@@ -31,7 +33,9 @@ public class ElasticsearchSearchService {
                         .value();
         if(exists)return;
         elasticsearchClient.indices().create(c->c
+                                            //索引库
                                             .index(INDEX_NAME)
+                                            //建表的字段限制
                                             .mappings(m->m
                                                         .properties("documentId",p->p.long_(l->l))
                                                         .properties("chunkIndex",p->p.integer(i->i))
@@ -63,8 +67,63 @@ public class ElasticsearchSearchService {
     public void indexChunks(List<ElasticsearchChunkDocument> documents)throws IOException{
         if(documents.size()==0)return;
         createIndexIfAbsent();
+        BulkResponse response = elasticsearchClient.bulk(builder -> {
+        for (ElasticsearchChunkDocument document : documents) {
+            //请求里装操作，操作里装写入，写入里装数据
+            builder.operations(operation -> operation
+                    //写入
+                    .index(index -> index
+                            // index、id、document
+                            //写入索引库
+                            .index(INDEX_NAME)
+                            //id
+                            .id(document.getDocumentId()+"_"+document.getChunkIndex())
+                            //写入内容
+                            .document(document)
+                    ));
+        }
+        return builder;
+        });
+        if(response.errors()){
+            StringBuilder errorMessage = new StringBuilder();
+            for (BulkResponseItem item : response.items()) {
+                if (item.error() != null) {
+                    errorMessage.append("id=")
+                            .append(item.id())
+                            .append(", status=")
+                            .append(item.status())
+                            .append(", reason=")
+                            .append(item.error().reason())
+                            .append("; ");
+                }
+            }
 
+            throw new IllegalStateException(
+                    "Elasticsearch 批量写入部分失败：" + errorMessage
+            );
+        }
     }
+
+    /**
+     * 删除chunk
+     * @param documentId
+     * @return
+     * @throws IOException
+     */
+    public long deleteByDocumentId(Long documentId) throws IOException{
+        DeleteByQueryResponse response =
+        elasticsearchClient.deleteByQuery(request -> request
+                .index(INDEX_NAME)
+                .query(query -> query
+                        .term(term -> term
+                                .field("documentId")
+                                .value(documentId)
+                        )
+                )
+        );
+        return response.deleted()==null?0L:response.deleted();
+    }
+
 
 
     /**
@@ -118,5 +177,6 @@ public class ElasticsearchSearchService {
         }
         return candidates;
     }
+
 
 }

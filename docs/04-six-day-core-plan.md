@@ -91,3 +91,96 @@ Elasticsearch 容器可用
 - 子任务进度与当天整体进度分开计算。例如 Redis 完成 85%，不代表包含 Elasticsearch 的今天计划完成 85%。
 - 编译通过只代表类型和 API 正确；需要真实依赖运行验证的链路，必须在运行成功后才算完成。
 - 每完成一条完整链路，再统一更新学习笔记，避免笔记被零散语法和半成品设计淹没。
+
+## 七、第 2 天验收结果（2026-07-24）
+
+已完成并验证：
+
+```text
+DocumentChunkService.processDocumentWithProgress()
+  -> 一篇文档先按 documentId 删除 Elasticsearch 旧 chunk
+  -> 批量写入当前 chunk
+  -> 统一 refresh
+
+文档删除链路
+  -> 同步清理 Elasticsearch chunk
+
+RrfFusionService
+  -> 按 documentId + chunkIndex 识别同一 chunk
+  -> 根据两路 rank 累加 RRF fusionScore
+  -> 合并 sources、降序排列、截取 Top K
+
+HybridRetrievalService
+  -> Redis 向量候选 + Elasticsearch BM25 候选
+  -> RRF 融合
+```
+
+运行证据：
+
+```text
+RrfFusionServiceTest：2 条通过，0 失败、0 错误
+HybridRetrievalServiceIT：真实连接 Redis Stack 和 Elasticsearch，
+同一测试 chunk 最终同时包含 REDIS_VECTOR 与 ELASTICSEARCH_BM25，
+1 条通过，0 失败、0 错误
+```
+
+因此第 2 天的核心验收目标已经完成。全量重建 Elasticsearch 的专用优化仍可后补，但不阻塞进入第 3 天；正常新增、更新、删除和真实双路融合链路已经具备。
+
+下一断点进入第 3 天：
+
+```text
+RRF Top K
+  -> 一次批量查询 MySQL 的 DocumentChunk
+  -> 取得所属 Document 标题
+  -> 组装 RetrievalHit
+  -> 让 RAG prompt 使用命中的 chunk
+  -> 返回引用证据
+```
+
+## 八、第 3 天验收结果（2026-07-24）
+
+已完成并验证：
+
+```text
+RRF Top K
+  -> DocumentChunkRepository 一次批量查询 MySQL
+  -> JOIN FETCH 同时取得 Document 标题
+  -> RetrievalResultService 精确过滤 documentId + chunkIndex
+  -> 保持 RRF 顺序并组装 RetrievalHit
+  -> AiService 普通 / SSE 问答使用 chunk 构建 Prompt
+  -> 普通响应与 SSE metadata 返回 citations
+```
+
+运行证据：
+
+```text
+RetrievalResultServiceTest：
+乱序、交叉组合、陈旧候选场景通过，
+1 条通过，0 失败、0 错误。
+
+RetrievalResultServiceMySqlIT：
+真实 MySQL JOIN 查询取得 chunk 与 Document，
+统计确认补全阶段只执行 1 条 SQL，
+1 条通过，0 失败、0 错误。
+
+POST /api/ai/ask：
+HTTP 200，DeepSeek 根据 chunk 证据回答，
+响应返回非空 citations。
+
+POST /api/ai/ask-stream：
+实际收到 message 流式事件，
+最终 metadata 在 fromCache=true 时仍返回非空 citations。
+```
+
+本次普通业务样本的引用来源均为 `REDIS_VECTOR`，因此该请求只验证了单路候选也能进入 RRF 和最终引用；双路同时命中已由第 2 天的 `HybridRetrievalServiceIT` 独立验证。第 5～6 天仍需准备一个可稳定展示两路来源的 Demo 样本。
+
+因此第 3 天验收目标已经完成，六天核心计划总进度为 50%。
+
+下一断点进入第 4 天：
+
+```text
+把混合检索封装成 Agent 可调用的知识库工具
+  -> Agent 根据问题选择是否调用工具
+  -> 工具调用前后执行最小权限过滤
+  -> 验证有权限用户可获得证据、无权限用户被拒绝
+```

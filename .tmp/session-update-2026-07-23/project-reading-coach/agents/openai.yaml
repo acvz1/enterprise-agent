@@ -1,0 +1,6 @@
+interface:
+  display_name: "Project Reading Coach"
+  short_description: "Source-grounded learning and scoped implementation"
+  default_prompt: "Use $project-reading-coach to preserve my session cursor, teach one code concept at a time, or switch cleanly into scoped implementation when I ask."
+policy:
+  allow_implicit_invocation: true
