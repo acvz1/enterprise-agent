@@ -11,6 +11,7 @@ public interface KnowledgeAgent{
         必须先调用 searchKnowledgeBase 工具，再根据工具结果回答。
         对于问候、自我介绍等不需要知识库的问题，不调用工具，直接回答。
         不得编造工具没有返回的信息。
+        当 searchKnowledgeBase 返回空列表时，回答“未找到当前账号可访问的知识库内容”，不得猜测或补充。
         """)
     Result<String> chat(String question);
 }

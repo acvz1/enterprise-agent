@@ -184,3 +184,118 @@ POST /api/ai/ask-stream：
   -> 工具调用前后执行最小权限过滤
   -> 验证有权限用户可获得证据、无权限用户被拒绝
 ```
+
+## 九、第 4 天验收结果（2026-07-25）
+
+已完成并验证：
+
+```text
+POST /api/ai/agent/ask
+  -> @PreAuthorize 在进入 Agent 前检查 qa:ask
+  -> KnowledgeAgentService 通过 AiServices 创建 Agent
+  -> 模型根据问题决定是否调用 searchKnowledgeBase
+  -> KnowledgeBaseTool 调用既有 HybridRetrievalService
+  -> Redis + Elasticsearch 召回、RRF、MySQL 补全 RetrievalHit
+  -> 工具返回模型前再次检查 document:read
+  -> AgentResponse 返回 answer、toolUsed、toolNames、citations
+```
+
+权限最小演示：
+
+```text
+GUEST 默认不授予业务权限
+  -> 有效 JWT 但没有 qa:ask
+  -> 请求 Agent 在检索和模型调用前返回 HTTP 403
+
+临时 QA-only 验收身份只有 qa:ask、没有 document:read
+  -> 能进入 Agent 并调用 searchKnowledgeBase
+  -> 检索结果在返回模型前被过滤为空
+  -> citations 为空
+  -> 回答“未找到当前账号可访问的知识库内容”
+```
+
+运行证据：
+
+```text
+知识库问题：
+HTTP 200，toolUsed=true，
+toolNames=[searchKnowledgeBase]，citations=3。
+
+普通问候：
+HTTP 200，toolUsed=false，
+toolNames=[]，citations=[]。
+
+GUEST 请求前权限：
+登录 HTTP 200，携带有效 JWT 请求 Agent 返回 HTTP 403。
+
+QA-only 检索后权限：
+HTTP 200，toolUsed=true，
+toolNames=[searchKnowledgeBase]，citations=0，
+回答未找到当前账号可访问的知识库内容。
+
+JDK 21 Maven compile：
+BUILD SUCCESS。
+```
+
+本轮只实现六天范围内的最小全局权限校验，不宣称已经具备部门、租户、文档密级或逐文档 ACL。临时验收用户和角色已在测试后清理。
+
+因此第 4 天验收目标已经完成，六天核心计划总进度约为 66.7%。
+
+下一断点进入第 5 天：
+
+```text
+准备固定检索评测问题与相关文档标注
+  -> 分别运行 Redis、Elasticsearch、混合检索
+  -> 记录 Hit@K / Recall@K
+  -> 记录延迟和 MySQL SQL 次数
+  -> 形成可复现的对比表与面试证据
+```
+
+## 十、第 5 天验收结果（2026-07-26）
+
+已完成并验证：
+
+```text
+4 篇固定评测文档、8 个分块
+  -> 15 个带标准答案的问题
+  -> Redis 向量、Elasticsearch BM25、RRF 混合检索使用同一语料
+  -> 统一按 documentId + chunkIndex 判断结果
+  -> 计算 Hit@3、Recall@3、平均延迟和 P95 延迟
+  -> 测试结束只清理评测专用数据
+```
+
+实测结果：
+
+| 检索策略 | Hit@3 | Recall@3 | 平均延迟 | P95 延迟 |
+| --- | ---: | ---: | ---: | ---: |
+| Redis 向量检索 | 0.8000 | 0.7667 | 116.059 ms | 524.068 ms |
+| Elasticsearch BM25 | 1.0000 | 1.0000 | 52.373 ms | 70.848 ms |
+| RRF 混合检索 | 0.9333 | 0.9333 | 214.430 ms | 348.513 ms |
+
+运行证据：
+
+```text
+RetrievalEvaluationIT：
+2 条通过，0 失败、0 错误。
+
+RetrievalResultServiceMySqlIT：
+真实 MySQL 查询，Hibernate 统计确认 Top K 补全阶段只执行 1 条 SQL，
+1 条通过，0 失败、0 错误。
+
+测试清理检查：
+Elasticsearch 评测文档剩余 0；
+Redis 评测文档剩余 0。
+```
+
+本次小规模中文企业制度语料中 BM25 表现最好；RRF 相比单独向量检索提高了命中与召回，但受到较弱向量排序影响，没有超过 BM25。混合链路当前串行执行，因此延迟高于单路。完整设计、结果和边界见 `docs/05-retrieval-evaluation-results.md`。
+
+因此第 5 天验收目标已经完成，六天核心计划总进度约为 83.3%。
+
+下一断点进入第 6 天：
+
+```text
+整理稳定 Demo 数据与演示顺序
+  -> 补全项目 README 和架构图
+  -> 把已验证结果整理成 STAR 简历描述
+  -> 准备围绕检索、RRF、权限、评测和性能的面试追问
+```

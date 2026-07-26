@@ -67,10 +67,8 @@ public class RolePermissionInitializer implements CommandLineRunner {
         userPermissions.add(dashboardView);
         createRoleIfNotExists("USER", "普通用户", userPermissions);
         
-        // GUEST 角色（只读权限）
+        // GUEST 角色（默认无业务权限）
         Set<Permission> guestPermissions = new HashSet<>();
-        guestPermissions.add(documentRead);
-        guestPermissions.add(qaAsk);
         createRoleIfNotExists("GUEST", "访客", guestPermissions);
         
         // 创建默认管理员账户
