@@ -4,9 +4,20 @@ target/
 .npm-cache/
 .pnpm-store/
 node_modules/
+**/.vite/
+**/dist/
+coverage/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
+
+### Temporary files and logs ###
+.tmp/
+tmp/
+temp/
+*.log
+*.tmp
+*.temp
 
 ### STS ###
 .apt_generated

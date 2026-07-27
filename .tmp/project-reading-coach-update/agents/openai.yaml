@@ -1,6 +1,0 @@
-interface:
-  display_name: "Project Reading Coach"
-  short_description: "Minimal-MVP codebase learning with hands-on checks"
-  default_prompt: "Use $project-reading-coach to teach me this codebase one verified concept at a time, with exact source locations and concise study notes."
-policy:
-  allow_implicit_invocation: true

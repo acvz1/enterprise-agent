@@ -1,6 +1,0 @@
-interface:
-  display_name: "Project Reading Coach"
-  short_description: "First-principles code learning without irrelevant detail"
-  default_prompt: "Use $project-reading-coach to derive one unfamiliar code concept from first principles, remove irrelevant detail, let me keep asking questions, then use a Feynman restatement after I finish."
-policy:
-  allow_implicit_invocation: true
