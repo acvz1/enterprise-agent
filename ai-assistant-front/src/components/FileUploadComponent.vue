@@ -598,8 +598,31 @@ onMounted(() => {
   width: 100%;
 }
 
+.file-upload-container :deep(.n-upload-dragger) {
+  padding: 32px 24px;
+  color: #49665e;
+  background:
+    linear-gradient(rgba(248, 251, 250, 0.96), rgba(248, 251, 250, 0.96)),
+    radial-gradient(circle at center, #cfe5de 1px, transparent 1px);
+  background-size: auto, 12px 12px;
+  border: 1px dashed #abcfc5;
+  border-radius: 15px;
+}
+
+.file-upload-container :deep(.n-upload-dragger:hover) {
+  background-color: #f0f8f5;
+  border-color: var(--kb-primary);
+}
+
 .upload-progress {
   margin-top: 16px;
+}
+
+.progress-item {
+  padding: 12px 14px;
+  background: #f6f9f8;
+  border: 1px solid #e0e9e5;
+  border-radius: 11px;
 }
 
 .upload-result {
@@ -618,6 +641,8 @@ onMounted(() => {
 
 .parsed-document-item {
   margin-bottom: 16px;
+  border: 1px solid var(--kb-line);
+  box-shadow: none;
 }
 
 .document-title {

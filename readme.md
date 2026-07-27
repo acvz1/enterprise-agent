@@ -1,102 +1,145 @@
 # Enterprise Knowledge Agent
 
-一个用于学习与求职展示的 Java 企业知识库 Agent 二次开发项目。
+基于 Java 21、Spring Boot、LangChain4j、Redis Stack、Elasticsearch 和 MySQL 的企业知识库 Agent 二次开发项目。
 
-当前仓库已经完成上游代码清理。它现在能完成登录、文档管理、知识库搜索和大模型问答，但还不会让大模型自己选择工具，因此还不是完整 Agent。
+项目不是只把文档塞给大模型：它用 Redis 做语义召回、Elasticsearch 做 BM25 关键词召回，通过 RRF 融合排名，再从 MySQL 批量取得权威原文。Agent 根据问题决定是否调用知识库工具，并返回可追溯到文档分块的引用证据。
 
-如果你刚开始学习后端，不要先背下面的技术栈。请从 [这个项目到底在做什么](docs/00-start-here.md) 开始，再看 [三条调用链](docs/02-architecture-and-call-chain.md)。
+> 项目基于开源知识库系统二次开发。文档 CRUD、文件解析和基础问答来自上游；Elasticsearch BM25、统一候选模型、RRF 融合、MySQL 批量补全、引用证据、Agent 工具调用、权限演示和检索评测是本轮重点改造。详细边界见 [面试与 Demo 手册](docs/04-interview-guide.md)。
 
-## 当前能力
+## 核心能力
 
-- Java 21 + Spring Boot 后端。
-- 用户登录和接口权限检查。
-- 文档上传、解析、分段、版本、分类与标签。
-- 根据问题搜索相关文档，再让大模型根据文档回答。
-- 保存最近对话和短期回答缓存。
-- 同时使用语义搜索和关键词搜索，并合并两份排名。
-- 回答可以逐步推送到前端。
-- MySQL、Redis、Docker 和 Vue 管理页面。
+- 支持 PDF、Word、TXT、Markdown 等企业文档解析、分块和异步入库。
+- Redis Stack 根据 Embedding 召回语义相近的 chunk。
+- Elasticsearch 使用 BM25 召回关键词匹配的 chunk。
+- 两路结果统一为 `RetrievalCandidate`，使用 RRF 按排名融合并去重。
+- RRF Top K 确定后，通过一条 MySQL JOIN 查询补全文档标题和最新原文，组装 `RetrievalHit`。
+- RAG 普通问答与 SSE 流式问答都能返回引用证据。
+- LangChain4j Agent 可自主决定是否调用 `searchKnowledgeBase`。
+- 使用 JWT、`qa:ask` 和 `document:read` 完成最小权限演示。
+- 提供固定评测集，对比 Redis、Elasticsearch 和 RRF 的 Hit@3、Recall@3 与延迟。
+- Vue 3 前端包含智能问答、知识库、检索实验室和评测看板。
 
-## 当前不宣称具备
+## 架构
 
-- 让大模型自己选择并反复调用工具。
-- 在搜索时严格排除当前用户无权查看的文档。
-- 可重试、可恢复的后台文档处理任务。
-- 回答精确引用到某篇文档的某个段落。
-- MCP 或正式的多 Agent 通信。
+```mermaid
+flowchart LR
+    U["用户 / Vue 3"] -->|"JWT + 问题"| A["AgentController"]
+    A --> P["qa:ask 权限检查"]
+    P --> S["KnowledgeAgentService"]
+    S --> L["LLM 决定是否调用工具"]
+    L -->|需要企业知识| T["KnowledgeBaseTool"]
+    L -->|普通问候| R["AgentResponse"]
 
-这些不是藏起来的缺陷，而是本项目的二次开发主线。详见 [上游审计](docs/01-upstream-audit.md) 和 [功能模块与工作量预估](docs/03-secondary-development-roadmap.md)。
+    T --> H["HybridRetrievalService"]
+    H --> V["Redis Vector Search"]
+    H --> E["Elasticsearch BM25"]
+    V --> C1["RetrievalCandidate"]
+    E --> C2["RetrievalCandidate"]
+    C1 --> F["RRF Fusion"]
+    C2 --> F
+    F --> K["Top K 候选"]
+    K --> M["MySQL 一次批量 JOIN\n补全权威 chunk + title"]
+    M --> D["document:read 二次权限检查"]
+    D --> X["RetrievalHit / 引用证据"]
+    X --> L
+    L --> R
+```
 
-## 最小启动
+数据职责：
 
-要求：JDK 21、Docker Desktop、Node.js 22+。运行 Maven 前先用 `java -version` 确认当前终端确实是 JDK 21；本项目当前依赖的 Hibernate 增强插件不能直接使用 JDK 25 构建。
+- **MySQL**：用户、文档、文档分块等权威业务数据。
+- **Redis Stack**：可重建的向量索引、会话记忆和短期缓存。
+- **Elasticsearch**：可重建的 BM25 关键词索引。
+- **LLM**：基于检索证据生成回答，不作为企业事实的数据源。
+
+更完整的入库链路、问答链路和责任边界见 [项目架构与调用链](docs/02-architecture-and-call-chain.md)。
+
+## 检索评测
+
+固定 4 篇文档、8 个 chunk、15 个标注问题的本地实测：
+
+| 策略 | Hit@3 | Recall@3 | 平均延迟 | P95 延迟 |
+|---|---:|---:|---:|---:|
+| Redis 向量检索 | 0.8000 | 0.7667 | 116.059 ms | 524.068 ms |
+| Elasticsearch BM25 | 1.0000 | 1.0000 | 52.373 ms | 70.848 ms |
+| RRF 混合检索 | 0.9333 | 0.9333 | 214.430 ms | 348.513 ms |
+
+这组小规模中文制度语料中 BM25 最好；RRF 相比单独向量检索提高了命中与召回，但没有超过 BM25，且当前两路串行执行导致延迟更高。项目不使用“混合检索一定更强”的虚假结论。完整口径见 [六天核心开发计划与验收](docs/03-six-day-core-plan.md)。
+
+## 五分钟 Demo
+
+演示语料位于 [`demo-data/knowledge-base`](demo-data/knowledge-base)，包含 DOCX、PDF、TXT 三种格式。
+
+推荐演示顺序：
+
+1. 使用 `admin / admin123` 登录，展示无 JWT 无法访问业务接口。
+2. 在知识库页面查看三种格式的“星桥科技”演示文档。
+3. 提问“公司每周哪两天允许申请远程办公，最晚什么时候提交？”。
+4. 展示答案、具体 chunk 引用，以及 `REDIS_VECTOR + ELASTICSEARCH_BM25` 双路来源。
+5. 提问“公司的股票期权分几年归属？”，展示知识缺失时拒绝编造。
+6. 打开检索评测结果，解释为什么当前语料上 BM25 优于向量检索。
+
+上传、解析和问答的实际验证证据见 [面试与 Demo 手册](docs/04-interview-guide.md)。
+
+## 本地启动
+
+要求：JDK 21、Docker Desktop、Node.js 22+。Hibernate 增强插件与当前依赖组合不支持使用 JDK 25 构建。
 
 ```powershell
-# 1. 只启动开发所需基础设施
-docker compose -f docker/docker-compose.yml up -d mysql redis
+# 1. 启动 MySQL、Redis Stack、Elasticsearch
+docker compose -f docker/docker-compose.yml up -d mysql redis elasticsearch
 
 # 2. 配置模型密钥
 Copy-Item .env.template .env
+# 至少填写默认模型所需的 DEEPSEEK_API_KEY
 
-# 3. 后端测试与启动
+# 3. 后端
 .\mvnw.cmd test
 .\mvnw.cmd spring-boot:run
 
-# 4. 前端（另开终端）
+# 4. 前端（新终端）
 Set-Location ai-assistant-front
 npm.cmd ci
-npm.cmd run dev
+npm.cmd run dev -- --host 127.0.0.1
 ```
 
-基础设施端口：MySQL `3307`、Redis `6379`、RedisInsight `8888`。后端默认 `8080`，前端默认 `5173`。
+访问：
 
-需要验证完整容器与监控时：
+- 前端：`http://localhost:5173`
+- 后端：`http://localhost:8080`
+- Elasticsearch：`http://localhost:9200`
+- RedisInsight：`http://localhost:8888`
 
-```powershell
-docker compose -f docker/docker-compose.yml --profile full up -d --build
-```
+## 关键代码
 
-## 核心调用链
+| 责任 | 入口 |
+|---|---|
+| Agent HTTP 接口 | `AgentController.ask()` |
+| Agent 创建与工具结果提取 | `KnowledgeAgentService.ask()` |
+| 知识库工具与读取权限 | `KnowledgeBaseTool.searchKnowledgeBase()` |
+| 双路检索编排 | `HybridRetrievalService.searchHits()` |
+| RRF 去重和融合 | `RrfFusionService.fuse()` |
+| MySQL 批量补全 | `RetrievalResultService.assembleHits()` |
+| 文档解析 | `FileParseService.parseFile()` |
+| 异步入库 Worker | `DocumentProcessingWorker.processFileAsync()` |
 
-```text
-HTTP/JWT
-  -> Controller
-  -> AiService（当前应用服务）
-  -> VectorSearchService -> EmbeddingModel -> Redis Stack
-                         -> MySQL 关键词检索
-                         -> weighted RRF
-  -> ChatMemoryStore -> Redis
-  -> ModelFactory -> LLM
-  -> JSON / SSE
-```
+## 已知边界
 
-目标调用链会演进为：
+- 当前是全局业务权限演示，不是部门、租户、密级或逐文档 ACL。
+- Redis 和 Elasticsearch 当前串行检索，混合链路延迟高于单路。
+- 批量并发上传曾实测触发一次 MySQL 死锁；单文档串行补建成功，尚未实现生产级死锁重试。
+- 复合问题可能让 Agent 重复调用知识库工具，导致引用重复。
+- 固定 `TopK=5` 会夹带少量弱相关引用，尚未加入 Reranker。
+- 不包含 MCP、多 Agent 或完整生产级可观测性，不将计划功能写成已实现成果。
 
-```text
-AgentController
-  -> AgentOrchestrator
-  -> ContextBuilder
-  -> AgentLoop <-> LLM
-       | tool_calls
-       v
-     ToolRegistry -> KnowledgeSearchTool
-                  |     -> 计算当前用户可访问范围
-                  |     -> Redis 在权限范围内做向量搜索
-                  |     -> Elasticsearch 用相同范围做关键词搜索
-                  |     -> 合并排名并再次校验权限
-                  -> DocumentTool / MCPTool
-  -> AgentRunTrace -> SSE
-```
+## 面试与项目材料
 
-完整模块分工见 [架构与调用链](docs/02-architecture-and-call-chain.md)。
-
-## 二开原则
-
-- 保留上游成熟的通用后端能力，重点改造 AI 应用核心链路。
-- 每个阶段都先定义输入、输出、状态和验收测试，再写实现。
-- Agent Loop、工具抽象、上下文构建和任务状态由项目作者亲手实现。
-- 框架只负责模型客户端、Web/ORM/安全等基础设施，不把核心思考外包给框架。
+- [项目介绍](docs/00-start-here.md)
+- [原项目检查与二开边界](docs/01-upstream-audit.md)
+- [架构与调用链](docs/02-architecture-and-call-chain.md)
+- [六天核心开发计划与验收](docs/03-six-day-core-plan.md)
+- [项目介绍、简历描述、Demo 与面试追问](docs/04-interview-guide.md)
 
 ## 来源与使用边界
 
-本项目基于 [2518350LJL/ai-knowledge-base](https://github.com/2518350LJL/ai-knowledge-base) 的提交 `82fa41079387b3450787d709b6a6efd17b45c00e` 做本地学习型二次开发。导入时上游仓库根目录未发现许可证文件，因此在获得明确授权或许可证前，不应公开分发衍生代码。详见 [UPSTREAM_NOTICE.md](UPSTREAM_NOTICE.md)。
+本项目基于 [2518350LJL/ai-knowledge-base](https://github.com/2518350LJL/ai-knowledge-base) 的提交 `82fa41079387b3450787d709b6a6efd17b45c00e` 进行学习型二次开发。上游来源与分发边界见 [UPSTREAM_NOTICE.md](UPSTREAM_NOTICE.md)。

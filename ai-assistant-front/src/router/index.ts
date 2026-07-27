@@ -23,24 +23,10 @@ const router = createRouter({
       component: HomeView,
       meta: { requiresAuth: true }
     },
-    {
-      path: '/about',
-      name: 'about',
-      component: () => import('../views/AboutView.vue'),
-      meta: { requiresAuth: true }
-    },
-    {
-      path: '/vector-search',
-      name: 'vector-search',
-      component: () => import('../views/VectorSearchView.vue'),
-      meta: { requiresAuth: true }
-    },
-    {
-      path: '/dashboard',
-      name: 'dashboard',
-      component: () => import('../views/DashboardView.vue'),
-      meta: { requiresAuth: true }
-    },
+    { path: '/about', redirect: '/' },
+    { path: '/vector-search', redirect: '/' },
+    { path: '/dashboard', redirect: '/' },
+    { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
 

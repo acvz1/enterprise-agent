@@ -1,7 +1,11 @@
 <template>
   <div class="document-container">
     <div class="document-header">
-      <h2>文档管理</h2>
+      <div>
+        <span>DOCUMENT LIFECYCLE</span>
+        <h2>企业文档</h2>
+        <p>文档保存至 MySQL，并同步构建 Redis 与 Elasticsearch 检索索引。</p>
+      </div>
       <n-space>
         <n-button type="primary" @click="showAddModal = true">
           <template #icon>
@@ -672,7 +676,7 @@ onMounted(() => {
   width: 100%;
   display: flex;
   flex-direction: column;
-  padding: 20px;
+  padding: 20px 24px 24px;
   box-sizing: border-box;
   overflow: hidden;
   margin: 0;
@@ -682,48 +686,105 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
-  padding: 0 4px;
+  gap: 20px;
+  margin-bottom: 14px;
+  padding: 2px 3px;
+}
+
+.document-header > div:first-child > span {
+  color: var(--kb-primary);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.document-header h2 {
+  margin: 3px 0 2px;
+  color: var(--kb-ink);
+  font-family: Georgia, 'Songti SC', serif;
+  font-size: 21px;
+  font-weight: 700;
+}
+
+.document-header p {
+  color: var(--kb-muted);
+  font-size: 9px;
 }
 
 .search-section {
-  margin-bottom: 20px;
+  margin-bottom: 14px;
+}
+
+.search-section :deep(.n-card) {
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid var(--kb-line);
+  border-radius: 15px;
+  box-shadow: none;
+}
+
+.search-section :deep(.n-card__content) {
+  padding: 16px 18px 6px;
+}
+
+.search-section :deep(.n-form-item-label) {
+  color: #536a64;
+  font-size: 9px;
+  font-weight: 700;
 }
 
 .document-list {
   flex: 1;
   overflow-y: auto;
-  padding-right: 4px;
+  padding: 1px 5px 10px 1px;
 }
 
 .document-item {
-  margin-bottom: 16px;
-  transition: all 0.3s ease;
-  border-radius: 8px;
+  margin-bottom: 10px;
+  background: #fff;
+  border: 1px solid var(--kb-line);
+  border-radius: 14px;
+  box-shadow: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .document-item:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  transform: translateY(-2px);
+  border-color: #bcd8d0;
+  box-shadow: 0 8px 24px rgba(26, 65, 56, 0.06);
+  transform: translateY(-1px);
+}
+
+.document-item :deep(.n-card-header) {
+  padding: 15px 17px 8px;
+}
+
+.document-item :deep(.n-card__content) {
+  padding: 5px 17px 11px;
+}
+
+.document-item :deep(.n-card__footer) {
+  padding: 10px 17px 14px;
+  border-top: 1px solid #edf1ef;
 }
 
 .document-title {
-  font-weight: bold;
-  font-size: 16px;
-  color: var(--primary-color);
+  color: var(--kb-ink);
+  font-family: Georgia, 'Songti SC', serif;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .document-content {
-  color: var(--n-text-color-2);
+  color: #536a64;
   white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.6;
-  margin-top: 8px;
-  max-height: 100px;
+  line-height: 1.65;
+  margin-top: 4px;
+  max-height: 72px;
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  font-size: 9px;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
 
@@ -731,7 +792,7 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 7px;
 }
 
 .document-footer {
@@ -749,8 +810,8 @@ onMounted(() => {
 .document-meta {
   display: flex;
   gap: 12px;
-  font-size: 12px;
-  color: var(--n-text-color-3);
+  color: var(--kb-muted);
+  font-size: 8px;
 }
 
 .pagination-container {
@@ -758,5 +819,16 @@ onMounted(() => {
   display: flex;
   justify-content: center;
   padding: 10px 0;
+}
+
+@media (max-width: 960px) {
+  .document-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .document-container {
+    padding: 16px;
+  }
 }
 </style>

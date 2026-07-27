@@ -1,185 +1,260 @@
-# 项目结构与三条调用链
+# 企业知识库 Agent：架构与核心调用链
 
-这份文档只解决两个问题：
+这份文档描述当前已经实现并验证的架构，不包含 MCP、多 Agent、Reranker 或逐文档 ACL 等计划功能。
 
-1. 项目中的文件为什么要分成 Controller、Service、Repository？
-2. 用户点一次按钮后，代码按什么顺序执行？
-
-## 1. 先看最普通的后端请求
-
-大部分请求都遵循下面的顺序：
+## 1. 一句话心智模型
 
 ```text
-前端发送 HTTP 请求
-  -> Controller 接收参数
-  -> Service 执行业务步骤
-  -> Repository 读写数据库
-  -> Service 整理结果
-  -> Controller 返回 JSON
+MySQL 保存权威文档
+  -> Redis 和 Elasticsearch 建立两种可重建索引
+  -> RRF 融合两份排名
+  -> 只给 Top K 候选补全 MySQL 原文
+  -> Agent 按需调用检索工具
+  -> 大模型根据证据回答并返回引用
 ```
 
-可以把它想成去银行办业务：
+## 2. 总体架构
 
-| 项目模块 | 银行类比 | 主要职责 |
+```mermaid
+flowchart TB
+    FE["Vue 3 前端\n登录 / 文档 / 问答 / 检索实验室"] -->|"HTTP + JWT"| SEC["Spring Security\nJwtAuthenticationFilter"]
+    SEC --> API["Controller 层"]
+    API --> APP["应用服务层"]
+
+    APP --> MYSQL[("MySQL\n权威业务数据")]
+    APP --> REDIS[("Redis Stack\n向量索引 / 会话 / 缓存")]
+    APP --> ES[("Elasticsearch\nBM25 chunk 索引")]
+    APP --> LLM["DeepSeek / DashScope\nChatLanguageModel"]
+
+    LLM -->|"tool call"| TOOL["KnowledgeBaseTool"]
+    TOOL --> APP
+```
+
+责任边界：
+
+| 层/组件 | 负责 | 不负责 |
 |---|---|---|
-| Controller | 柜台 | 接收申请、检查基础格式、返回办理结果 |
-| Service | 业务人员 | 决定先做什么、后做什么 |
-| Repository | 档案系统接口 | 查询和保存数据库记录 |
-| Entity | 一张业务记录 | 用 Java 对象表示数据库中的数据 |
+| Vue 前端 | 收集输入、展示文档/答案/引用 | 决定检索排名、保存权威数据 |
+| Controller | HTTP 参数与响应边界 | 编排复杂检索流程 |
+| Service | 业务步骤、事务和外部组件编排 | 直接承担页面展示 |
+| MySQL | 文档和 chunk 的最终权威版本 | 相似度检索 |
+| Redis | Embedding 向量召回 | 保存不可丢失的文档事实 |
+| Elasticsearch | BM25 关键词召回 | 作为文档权威数据源 |
+| LLM | 工具选择、基于证据组织回答 | 决定企业事实是否正确 |
 
-这样分层的原因是：接收 HTTP、处理业务和操作数据库是三种不同工作。分开后更容易测试和修改。
+## 3. 文档入库链路
 
-## 2. 项目的四个外部部分
+输入：PDF、DOCX、TXT、Markdown 等文件。
+输出：MySQL 文档与 chunk、Redis 向量索引、Elasticsearch BM25 索引。
 
-```text
-Vue 前端
-   |
-   | HTTP 请求 / 持续推送的回答
-   v
-Spring Boot 后端
-   |-------------------|-------------------|
-   v                   v                   v
-MySQL               Redis Stack          大模型 API
+```mermaid
+sequenceDiagram
+    participant UI as FileUploadComponent
+    participant C as FileUploadController
+    participant S as DocumentProcessingService
+    participant W as DocumentProcessingWorker
+    participant T as FileParseService
+    participant M as MySQL
+    participant R as Redis
+    participant E as Elasticsearch
+
+    UI->>C: POST /api/files/upload-async (MultipartFile)
+    C->>S: uploadFileAsync(file)
+    S->>S: 文件复制到应用管理的稳定目录
+    S->>M: 保存 UploadProgress(PENDING)
+    S->>W: processFileAsync(uploadId)
+    C-->>UI: 202 + uploadId
+    UI->>C: 轮询 upload-progress
+
+    W->>T: 根据 uploadId 解析稳定文件
+    T-->>W: title + content + metadata
+    W->>M: 保存 Document
+    W->>M: 删除该文档旧 chunk，写入新 chunk
+    W->>R: 写入 Embedding + TextSegment metadata
+    W->>E: 删除旧索引并批量写入当前 chunk
+    W->>M: UploadProgress = COMPLETED
 ```
 
-- MySQL：长期保存用户、文档、文档段落等业务数据。
-- Redis Stack：保存向量、最近对话和短期缓存。向量用于寻找语义相近的文字。
-- 大模型 API：接收问题和参考资料，生成最终文字回答。
+为什么先删除旧 chunk 再重建：文档修改后，旧正文可能产生了不同数量、不同内容的切片；仅覆盖当前编号会留下已经不存在的旧切片。删除依据只需要 `documentId`，重新生成阶段才需要当前正文。
 
-一句话区分 MySQL 和 Redis：MySQL 里的业务数据不能轻易丢；Redis 里的搜索索引和缓存即使丢了，也应该能重新生成。
+重要边界：三份文件同时异步处理时，实际发生过一次 MySQL `document_chunks` 写入死锁。失败文档的主记录已经保存，最终通过 `POST /api/documents/{id}/vectorize` 串行重建成功。当前链路可演示，但还没有生产级死锁重试和并发治理。
 
-后续还会正式加入 Elasticsearch，但它目前不在运行链路里。加入后的分工是：MySQL 保存权威业务数据，Redis 做语义相似搜索，Elasticsearch 做关键词搜索、条件过滤和高亮。搜索索引都必须能根据 MySQL 数据重新生成。
+## 4. Redis 向量召回
 
-## 3. 调用链一：用户登录
-
-输入：用户名和密码。
-
-输出：JWT，也就是后续请求携带的登录凭证。
+入口：`VectorSearchService.searchVectorCandidates()`。
 
 ```text
-登录页面
- -> AuthController：接收用户名和密码
- -> AuthService：检查登录逻辑
- -> UserRepository：从 MySQL 查询用户
- -> PasswordEncoder：比较密码
- -> JwtTokenProvider：生成 JWT
- -> 前端保存 JWT
+用户 query
+  -> EmbeddingModel 生成查询向量
+  -> RedisEmbeddingStore.search()
+  -> List<EmbeddingMatch<TextSegment>>
+  -> 从 TextSegment.metadata 读取 documentId、chunkIndex
+  -> 根据返回顺序生成 rank = 1, 2, 3...
+  -> RetrievalCandidate(source = REDIS_VECTOR)
 ```
 
-用户以后访问文档或问答接口时：
+Redis 中不仅保存 384 维向量，还保存 `TextSegment` 原文和 `documentId + chunkIndex`。向量负责计算相似度，metadata 负责把搜索结果重新定位到业务文档分块。
+
+候选阶段不查询 MySQL，因为 RRF 只需要 chunk 身份、排名和来源。
+
+## 5. Elasticsearch BM25 召回
+
+入口：`ElasticsearchSearchService.searchBm25Candidates()`。
+
+索引最小字段：
 
 ```text
-请求携带 JWT
- -> JwtAuthenticationFilter 检查 JWT
- -> 检查通过后才进入具体 Controller
+documentId: long
+chunkIndex: integer
+content: text
 ```
-
-`Filter` 可以先理解成“所有请求进入 Controller 前经过的检查站”。
-
-## 4. 调用链二：上传一篇文档
-
-输入：PDF、Word、Markdown 等文件。
-
-输出：MySQL 中的文档和段落，以及 Redis 中用于搜索的向量。
 
 ```text
-上传页面
- -> FileUploadController：接收文件
- -> FileParseService：从文件提取纯文字
- -> DocumentService：把文档保存到 MySQL
- -> DocumentChunkService：把长文档切成小段
- -> EmbeddingModel：把每一小段转成向量
- -> RedisEmbeddingStore：把向量保存到 Redis
+用户 query
+  -> match(content, query)
+  -> Elasticsearch 使用 BM25 计算 _score
+  -> 按 _score 降序返回 hit
+  -> 根据返回顺序生成 rank
+  -> RetrievalCandidate(source = ELASTICSEARCH_BM25)
 ```
 
-为什么要切成小段？
+BM25 不是“返回 25 条”，而是关键词相关性排序算法的名称。它擅长制度名、产品名、错误码、P1 等精确词匹配。
 
-假设一本员工手册有 100 页，用户只问“病假需要什么证明”。如果把整本书交给大模型，既浪费输入长度，也会混入大量无关内容。切成段后，可以只找最相关的几段。
+## 6. 为什么使用统一候选和 RRF
 
-当前异步上传存在错误：Controller 把请求中的临时文件直接交给同一个 Service 的 `@Async` 方法。第一阶段会把文件先保存到稳定位置，再只把任务编号交给独立后台模块。
+Redis 的余弦相似度与 Elasticsearch 的 BM25 `_score` 不在同一量纲，不能直接相加。
 
-## 5. 调用链三：用户提出问题
-
-输入：问题、会话编号、选择的模型。
-
-输出：普通 JSON 回答，或者逐步显示的流式回答。
+两路先统一成：
 
 ```text
-聊天页面
- -> AiController：接收问题
- -> AiService：组织整个问答步骤
- -> VectorSearchService：寻找相关文档
-      -> 把问题转成向量
-      -> 从 Redis 找语义相近的段落
-      -> 从 MySQL 做关键词搜索
-      -> 合并两份搜索排名
- -> ChatMemoryStore：读取最近几轮聊天
- -> AiService：拼出本次给大模型的材料
- -> ModelFactory：根据配置选择具体模型
- -> 大模型生成回答
- -> Controller 把回答返回前端
+RetrievalCandidate
+  documentId
+  chunkIndex
+  rank
+  rawScore
+  source
 ```
 
-这里的 RAG 就是中间的“先搜索资料，再让大模型回答”这几步，不是一个神秘的新模型。
-
-完成 Elasticsearch 二开后，问答链中的“MySQL 关键词搜索”会替换成：
+`RrfFusionService.fuse()` 使用 `documentId + "_" + chunkIndex` 识别同一 chunk。每一路对候选的贡献为：
 
 ```text
-先计算当前用户有权访问哪些知识范围
-Redis：在这个范围内寻找意思相近的段落
-Elasticsearch：使用相同范围寻找关键词匹配的段落
- -> 合并两份排名
- -> 再做一次权限校验
- -> 统一返回文档编号、段落编号、分数和引用信息
+1 / (60 + rank)
 ```
 
-这样加入 Elasticsearch 是为了让它承担明确职责，不是为了让技术栈看起来更多。
+同一 chunk 被两路命中时，两个贡献相加并合并 `sources`。最终按 `fusionScore` 降序取 Top K。
 
-## 6. 普通回答和流式回答有什么区别
+RRF 的价值不是保证一定超过最强单路，而是避开异构分数归一化，让语义召回和关键词召回用各自的排名共同投票。
 
-普通回答：后端等大模型全部生成完，再一次性返回。
+## 7. Top K 后为什么还要查询 MySQL
 
-流式回答：大模型生成一点，后端就通过 SSE 推送一点，所以前端看起来像逐字出现。
-
-SSE 的全名是 Server-Sent Events。现在只需把它理解为“服务器保持连接，并持续向浏览器发送消息”。
-
-## 7. 当前为什么还不算 Agent
-
-现在的 `AiService` 已经提前写死了执行顺序：
+`RetrievalCandidate` 只够排序，不是最终回答证据。模型和前端还需要最新标题、chunk 主键和权威原文。
 
 ```text
-查知识库 -> 读取历史 -> 调大模型 -> 返回
+List<FusedRetrievalCandidate>
+  -> 收集 documentId 集合与 chunkIndex 集合
+  -> DocumentChunkRepository 一次 JOIN FETCH 查询
+  -> 用 documentId + chunkIndex 建 Map
+  -> 按 RRF 原顺序精确匹配
+  -> RetrievalHit
 ```
 
-真正的 Agent 会让大模型在运行过程中选择下一步：
+必须进行“精确匹配”，因为 SQL 使用的是两个集合：
 
 ```text
-收到问题
- -> 大模型判断是否需要工具
- -> 如果需要：调用“查知识库”等工具
- -> 把工具结果交回大模型
- -> 大模型再次判断
- -> 得到足够信息后结束
+documentId IN (...)
+AND chunkIndex IN (...)
 ```
 
-这段“判断—调用工具—读取结果—再次判断”的重复过程，叫 Agent Loop。
+它可能取出集合的交叉组合。Service 需要再次按复合键过滤，避免把不在 Top K 的 chunk 拼进结果。
 
-后面计划新增三个核心模块：
+实测 Top K 补全阶段只执行 1 条 SQL，避免逐条查询导致 N+1。
 
-- `AgentLoop`：控制这次循环什么时候继续、什么时候结束。
-- `ToolRegistry`：保存系统有哪些工具，并根据工具名找到对应代码。
-- `ContextBuilder`：决定这一次把哪些历史消息、文档段落和工具结果交给大模型。
+## 8. RAG 问答链路
 
-它们现在还没有实现，不需要现在背类名。
+固定 RAG 接口：
 
-## 8. 第一次读代码的顺序
+```text
+POST /api/ai/ask
+  -> AiService
+  -> HybridRetrievalService.searchHits()
+  -> RetrievalHit 转成带编号的上下文
+  -> ChatLanguageModel
+  -> answer + citations
+```
 
-先只跟问答链，不要同时打开整个项目：
+SSE 接口会逐段推送 `message`，结束时通过 metadata 返回 citations。即使答案来自缓存，引用也会随 metadata 返回。
 
-1. `AiController.java`：找到 `/api/ai/ask` 接口。
-2. `AiService.java`：看 Controller 接下来调用了哪个方法。
-3. `VectorSearchService.java`：看问题怎样变成搜索结果。
-4. `ModelFactory.java`：看模型名称怎样对应具体客户端。
-5. `ChatMemoryStore.java`：看最近对话怎样保存和读取。
+## 9. Agent 工具调用链路
 
-每读一个方法只回答三件事：它收到什么、返回什么、下一步调用谁。先不要逐行研究 Spring 注解。
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant C as AgentController
+    participant S as KnowledgeAgentService
+    participant L as LLM
+    participant T as KnowledgeBaseTool
+    participant H as HybridRetrievalService
+
+    U->>C: POST /api/ai/agent/ask
+    C->>C: @PreAuthorize 检查 qa:ask
+    C->>S: ask(question, model)
+    S->>L: chat(question) + tools
+    alt 企业制度/业务资料问题
+        L->>T: searchKnowledgeBase(query)
+        T->>H: searchHits(...)
+        H-->>T: List<RetrievalHit>
+        T->>T: 检查 document:read
+        T-->>L: 有权限返回 hits，否则返回 []
+        L-->>S: 基于工具结果回答
+    else 普通问候
+        L-->>S: 不调用工具，直接回答
+    end
+    S-->>C: answer + toolUsed + toolNames + citations
+    C-->>U: AgentResponse
+```
+
+当前 Agent 与固定 RAG 的区别：固定 RAG 每次都搜索；Agent 由模型根据问题决定是否调用 `searchKnowledgeBase`。当前没有手写多步 `while` Agent Loop，而是使用 LangChain4j `AiServices` 的工具调用能力。
+
+## 10. 权限边界
+
+当前只实现最小可演示的全局权限：
+
+```text
+进入 Agent 前：qa:ask
+工具结果返回模型前：document:read
+```
+
+实测：
+
+- GUEST 没有 `qa:ask`，HTTP 403，模型调用和检索都不会发生。
+- QA-only 用户有 `qa:ask`、没有 `document:read`，可以进入 Agent，但工具返回空列表，citations 为空。
+
+这不能宣称为逐文档 ACL。部门、租户、文档密级等过滤仍是后续生产化工作。
+
+## 11. 评测结论
+
+4 篇文档、8 个 chunk、15 个问题的固定评测：
+
+| 策略 | Hit@3 | Recall@3 | 平均延迟 | P95 |
+|---|---:|---:|---:|---:|
+| Redis | 0.8000 | 0.7667 | 116.059 ms | 524.068 ms |
+| Elasticsearch | 1.0000 | 1.0000 | 52.373 ms | 70.848 ms |
+| RRF | 0.9333 | 0.9333 | 214.430 ms | 348.513 ms |
+
+结论：
+
+- 当前中文制度小样本中 BM25 最强。
+- RRF 比向量单路更准，但没有超过 BM25。
+- 当前两路串行执行，RRF 延迟高于单路。
+- 面试时应讲真实取舍：混合检索提高召回稳健性，但需要并行化、阈值或 Reranker 才可能进一步改善精度与延迟。
+
+## 12. 最小代码阅读顺序
+
+1. `AgentController.ask()`：HTTP 入口和请求权限。
+2. `KnowledgeAgentService.ask()`：创建 Agent，注册工具，提取工具执行结果。
+3. `KnowledgeBaseTool.searchKnowledgeBase()`：知识库工具和结果权限。
+4. `HybridRetrievalService.searchHits()`：双路召回与结果补全编排。
+5. `VectorSearchService.searchVectorCandidates()`：Redis 候选。
+6. `ElasticsearchSearchService.searchBm25Candidates()`：BM25 候选。
+7. `RrfFusionService.fuse()`：去重、融合和 Top K。
+8. `RetrievalResultService.assembleHits()`：一条 MySQL 查询补全最终证据。
