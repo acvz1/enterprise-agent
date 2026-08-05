@@ -122,24 +122,3 @@ npm.cmd run dev -- --host 127.0.0.1
 | MySQL 批量补全 | `RetrievalResultService.assembleHits()` |
 | 文档解析 | `FileParseService.parseFile()` |
 | 异步入库 Worker | `DocumentProcessingWorker.processFileAsync()` |
-
-## 已知边界
-
-- 当前是全局业务权限演示，不是部门、租户、密级或逐文档 ACL。
-- Redis 和 Elasticsearch 当前串行检索，混合链路延迟高于单路。
-- 批量并发上传曾实测触发一次 MySQL 死锁；单文档串行补建成功，尚未实现生产级死锁重试。
-- 复合问题可能让 Agent 重复调用知识库工具，导致引用重复。
-- 固定 `TopK=5` 会夹带少量弱相关引用，尚未加入 Reranker。
-- 不包含 MCP、多 Agent 或完整生产级可观测性，不将计划功能写成已实现成果。
-
-## 面试与项目材料
-
-- [项目介绍](docs/00-start-here.md)
-- [原项目检查与二开边界](docs/01-upstream-audit.md)
-- [架构与调用链](docs/02-architecture-and-call-chain.md)
-- [六天核心开发计划与验收](docs/03-six-day-core-plan.md)
-- [项目介绍、简历描述、Demo 与面试追问](docs/04-interview-guide.md)
-
-## 来源与使用边界
-
-本项目基于 [2518350LJL/ai-knowledge-base](https://github.com/2518350LJL/ai-knowledge-base) 的提交 `82fa41079387b3450787d709b6a6efd17b45c00e` 进行学习型二次开发。上游来源与分发边界见 [UPSTREAM_NOTICE.md](UPSTREAM_NOTICE.md)。
