@@ -44,6 +44,9 @@ public class DocumentChunkService {
 
     @Autowired
     private ElasticsearchSearchService elasticsearchSearchService;
+
+    @Autowired
+    private RedisVectorIndexService redisVectorIndexService;
     
     @Autowired
     private ApplicationContext applicationContext;
@@ -104,7 +107,9 @@ public class DocumentChunkService {
         Long docId = document.getId();
         String docContent = document.getContent();
         
-        // 清除该文档的旧分块
+        // 清除该文档的旧向量与旧分块，避免更新后仍由旧内容参与召回
+        long deletedRedisVectors = redisVectorIndexService.deleteByDocumentId(documentId);
+        logger.debug("✅ [Redis] 文档旧向量删除完成，文档ID: {}, 删除 {} 条", documentId, deletedRedisVectors);
         documentChunkRepository.deleteByDocumentId(documentId);
         
         // 创建文档分割器
@@ -151,6 +156,7 @@ public class DocumentChunkService {
 
             // 将文档块添加到向量存储
             String embeddingId = embeddingStore.add(embeddingModel.embed(indexedSegment.text()).content(), indexedSegment);
+            redisVectorIndexService.registerEmbedding(docId, embeddingId);
             
             // 添加到elasticsearch列表
             elasticsearchDocuments.add(new ElasticsearchChunkDocument(docId,i,segment.text()));
@@ -236,18 +242,16 @@ public class DocumentChunkService {
     public void deleteChunksByDocumentId(Long documentId) {
         logger.info("删除文档的所有分块，文档ID: {}", documentId);
         
-        // 1. 从MySQL删除分块数据
+        // 1. 从Redis删除该文档登记过的向量数据
+        long deletedRedisVectors = redisVectorIndexService.deleteByDocumentId(documentId);
+        logger.debug("✅ [Redis] 文档向量删除完成，文档ID: {}, 删除 {} 条", documentId, deletedRedisVectors);
+
+        // 2. 从MySQL删除分块数据
         int deletedChunks = documentChunkRepository.findByDocumentIdOrderByChunkIndexAsc(documentId).size();
         documentChunkRepository.deleteByDocumentId(documentId);
         logger.debug("✅ [MySQL] 文档分块删除完成，文档ID: {}, 删除 {} 个分块", documentId, deletedChunks);
-        
-        // 2. 从Redis删除向量数据
-        // 注意：LangChain4J的RedisEmbeddingStore没有提供单个向量删除API
-        // 当前策略：记录日志，忽略Redis孤立向量（它们不会影响检索结果，因为MySQL中已无对应文档）
-        // 最佳实践：定期执行全量重建向量索引，清理孤立数据
-        logger.warn("⚠️ [Redis] 向量数据未实时删除，文档ID: {}，建议定期执行全量重建", documentId);
 
-        // 3. 从 Elasticsearch 删除分块
+        // 3. 从Elasticsearch删除分块
         try {
             long deletedCount = elasticsearchSearchService.deleteByDocumentId(documentId);
             logger.debug("✅ [Elasticsearch] 文档分块删除完成，文档ID: {}, 删除 {} 个分块",
