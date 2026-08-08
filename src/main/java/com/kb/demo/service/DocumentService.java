@@ -131,11 +131,12 @@ public class DocumentService {
     }
     
     /**
-     * 更新文档并创建版本记录（事务外部处理版本创建）
+     * 更新文档、创建版本记录，并在正文变化时同步重建检索数据
      * @param id 文档ID
      * @param document 更新后的文档信息
      * @return 更新后的文档
      */
+    @Transactional
     public Document updateDocumentWithVersion(Long id, Document document) {
         // 获取原始文档
         Document originalDocument = getDocumentById(id);
@@ -144,8 +145,9 @@ public class DocumentService {
         }
         
         // 检查是否有变更
-        boolean hasChanges = !originalDocument.getTitle().equals(document.getTitle()) || 
-                            !originalDocument.getContent().equals(document.getContent());
+        boolean titleChanged = !originalDocument.getTitle().equals(document.getTitle());
+        boolean contentChanged = !originalDocument.getContent().equals(document.getContent());
+        boolean hasChanges = titleChanged || contentChanged;
         
         // 先更新文档
         Document updatedDocument = updateDocument(id, document);
@@ -153,10 +155,10 @@ public class DocumentService {
         // 如果有变更，创建新版本（在事务外部）
         if (hasChanges) {
             String changeSummary = "文档更新";
-            if (!originalDocument.getTitle().equals(document.getTitle())) {
+            if (titleChanged) {
                 changeSummary += " (标题变更)";
             }
-            if (!originalDocument.getContent().equals(document.getContent())) {
+            if (contentChanged) {
                 changeSummary += " (内容变更)";
             }
             
@@ -171,6 +173,12 @@ public class DocumentService {
                 // 创建版本失败，但文档更新已经成功，记录日志但不抛出异常
                 System.err.println("创建文档版本失败: " + e.getMessage());
             }
+        }
+
+        // 正文变化后同步重建MySQL分块、Redis向量和Elasticsearch索引。
+        // 仅修改标题时无需重新计算Embedding；最终标题由MySQL Document补全。
+        if (contentChanged) {
+            documentChunkService.processDocument(id);
         }
         
         return updatedDocument;
