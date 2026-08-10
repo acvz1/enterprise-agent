@@ -109,9 +109,9 @@ public class AuthService {
         user.setPhone(registerRequest.getPhone());
         user.setNickname(registerRequest.getNickname());
         
-        // 分配默认角色 USER
+        // 公开注册只能获得无业务权限的 GUEST，业务角色必须由管理员审批授予。
         Set<Role> roles = new HashSet<>();
-        Role userRole = roleRepository.findByName("USER")
+        Role userRole = roleRepository.findByName("GUEST")
             .orElseThrow(() -> new RuntimeException("角色不存在"));
         roles.add(userRole);
         user.setRoles(roles);

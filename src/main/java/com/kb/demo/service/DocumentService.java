@@ -296,12 +296,7 @@ public class DocumentService {
         
         // 如果需要进行分块处理
         if (processChunk) {
-            try {
-                documentChunkService.processDocument(savedDocument.getId());
-            } catch (Exception e) {
-                // 分块处理失败，但文档保存已经成功，记录日志但不抛出异常
-                System.err.println("文档分块处理失败: " + e.getMessage());
-            }
+            documentChunkService.processDocument(savedDocument.getId());
         }
         
         return savedDocument;
@@ -354,12 +349,7 @@ public class DocumentService {
             
             // 如果需要进行分块处理
             if (processChunk) {
-                try {
-                    documentChunkService.processDocument(id);
-                } catch (Exception e) {
-                    // 分块处理失败，但文档更新已经成功，记录日志但不抛出异常
-                    System.err.println("文档分块处理失败: " + e.getMessage());
-                }
+                documentChunkService.processDocument(id);
             }
         }
         

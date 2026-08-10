@@ -7,11 +7,15 @@ import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.Arrays;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Executes document ingestion on the configured background executor.
@@ -27,6 +31,9 @@ public class DocumentProcessingWorker {
     private final UploadProgressRepository uploadProgressRepository;
     private final MetricsService metricsService;
     private final DocumentFileStorage documentFileStorage;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private ApplicationContext applicationContext;
 
     public DocumentProcessingWorker(
             FileParseService fileParseService,
@@ -70,6 +77,11 @@ public class DocumentProcessingWorker {
             String enhancedContent = String.format(
                     "文件类型: %s%n%n%s", fileType, parseResult.get("content"));
             document.setContent(enhancedContent);
+
+            if (progress.getVisibleDepartmentIds() != null && !progress.getVisibleDepartmentIds().isBlank()) {
+                applicationContext.getBean(DepartmentAccessService.class)
+                        .applyBackgroundDocumentDepartments(document, parseDepartmentIds(progress.getVisibleDepartmentIds()));
+            }
 
             Document savedDocument = documentService.saveDocument(document, false);
 
@@ -123,5 +135,12 @@ public class DocumentProcessingWorker {
     private String safeErrorMessage(Exception exception) {
         String message = exception.getMessage();
         return message == null || message.isBlank() ? "文档处理失败" : message;
+    }
+
+    private Set<Long> parseDepartmentIds(String value) {
+        return Arrays.stream(value.split(","))
+                .filter(item -> !item.isBlank())
+                .map(Long::valueOf)
+                .collect(Collectors.toSet());
     }
 }

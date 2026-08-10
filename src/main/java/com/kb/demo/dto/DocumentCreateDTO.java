@@ -4,6 +4,7 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * 文档创建数据传输对象
@@ -21,6 +22,9 @@ public class DocumentCreateDTO {
     private List<Long> categoryIds;
 
     private List<Long> tagIds;
+
+    /** 新文档的可见部门；普通用户省略时使用自己的可访问部门。 */
+    private Set<Long> visibleDepartmentIds;
 
     // Getters and Setters
     public String getTitle() {
@@ -53,5 +57,13 @@ public class DocumentCreateDTO {
 
     public void setTagIds(List<Long> tagIds) {
         this.tagIds = tagIds;
+    }
+
+    public Set<Long> getVisibleDepartmentIds() {
+        return visibleDepartmentIds;
+    }
+
+    public void setVisibleDepartmentIds(Set<Long> visibleDepartmentIds) {
+        this.visibleDepartmentIds = visibleDepartmentIds;
     }
 }

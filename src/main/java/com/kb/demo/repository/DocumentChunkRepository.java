@@ -104,4 +104,19 @@ public interface DocumentChunkRepository extends JpaRepository<DocumentChunk, Lo
     List<DocumentChunk> findCandidateChunksWithDocument(
         @Param("documentIds") Set<Long> documentIds,
         @Param("chunkIndexes") Set<Integer> chunkIndexes);
+
+    /** 最终权威数据补全时再次按部门范围收口，避免索引与权限变更之间泄露旧命中。 */
+    @Query("""
+    SELECT DISTINCT dc
+    FROM DocumentChunk dc
+    JOIN FETCH dc.document d
+    JOIN d.visibleDepartments department
+    WHERE d.id IN :documentIds
+      AND dc.chunkIndex IN :chunkIndexes
+      AND department.id IN :departmentIds
+    """)
+    List<DocumentChunk> findCandidateChunksWithDocumentAndDepartments(
+        @Param("documentIds") Set<Long> documentIds,
+        @Param("chunkIndexes") Set<Integer> chunkIndexes,
+        @Param("departmentIds") Set<Long> departmentIds);
 }

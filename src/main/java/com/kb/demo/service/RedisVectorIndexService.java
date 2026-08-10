@@ -63,6 +63,19 @@ public class RedisVectorIndexService {
         return count;
     }
 
+    /**
+     * 清理全量重建前遗留的文档向量 ID 登记表。
+     */
+    public long clearAllRegistrations() {
+        Set<String> registryKeys = redisTemplate.keys(DOCUMENT_REGISTRY_PREFIX + "*");
+        if (registryKeys == null || registryKeys.isEmpty()) {
+            return 0L;
+        }
+
+        Long deletedCount = redisTemplate.delete(registryKeys);
+        return deletedCount == null ? 0L : deletedCount;
+    }
+
     private String registryKey(Long documentId) {
         return DOCUMENT_REGISTRY_PREFIX + documentId;
     }

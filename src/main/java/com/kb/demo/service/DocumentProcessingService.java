@@ -12,6 +12,8 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Accepts upload requests and hands durable ingestion jobs to the background worker.
@@ -41,6 +43,11 @@ public class DocumentProcessingService {
      * Persists the request-scoped file and creates a queryable ingestion job.
      */
     public String uploadFileAsync(MultipartFile file) {
+        return uploadFileAsync(file, Set.of());
+    }
+
+    /** Stores the authorized department range with the durable upload job. */
+    public String uploadFileAsync(MultipartFile file, Set<Long> visibleDepartmentIds) {
         String uploadId = UUID.randomUUID().toString();
         String originalFilename = normalizedFilename(file.getOriginalFilename());
         Path storedFile = documentFileStorage.store(uploadId, file);
@@ -54,6 +61,8 @@ public class DocumentProcessingService {
             progress.setUploadedSize(file.getSize());
             progress.setStatus(UploadProgress.UploadStatus.PENDING);
             progress.setPercentage(0);
+            progress.setVisibleDepartmentIds(visibleDepartmentIds == null ? "" : visibleDepartmentIds.stream()
+                    .sorted().map(String::valueOf).collect(Collectors.joining(",")));
             uploadProgressRepository.save(progress);
             progressSaved = true;
 

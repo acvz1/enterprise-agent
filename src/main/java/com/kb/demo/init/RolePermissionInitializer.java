@@ -90,16 +90,16 @@ public class RolePermissionInitializer implements CommandLineRunner {
     }
     
     private Role createRoleIfNotExists(String name, String description, Set<Permission> permissions) {
-        return roleRepository.findByName(name)
-            .orElseGet(() -> {
-                Role role = new Role();
-                role.setName(name);
-                role.setDescription(description);
-                role.setPermissions(permissions);
-                Role saved = roleRepository.save(role);
-                logger.info("创建角色: {}", name);
-                return saved;
-            });
+        Role role = roleRepository.findByName(name).orElseGet(() -> {
+            Role newRole = new Role();
+            newRole.setName(name);
+            logger.info("创建角色: {}", name);
+            return newRole;
+        });
+
+        role.setDescription(description);
+        role.setPermissions(new HashSet<>(permissions));
+        return roleRepository.save(role);
     }
     
     private void createDefaultAdminIfNotExists() {
@@ -116,7 +116,7 @@ public class RolePermissionInitializer implements CommandLineRunner {
             admin.setRoles(roles);
             
             userRepository.save(admin);
-            logger.info("创建默认管理员账户: {} / admin123", adminUsername);
+            logger.info("创建默认管理员账户: {}", adminUsername);
         }
     }
 }

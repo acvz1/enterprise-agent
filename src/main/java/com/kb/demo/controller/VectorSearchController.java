@@ -2,12 +2,16 @@ package com.kb.demo.controller;
 
 import com.kb.demo.entity.Document;
 import com.kb.demo.service.VectorSearchService;
+import com.kb.demo.service.DocumentService;
+import com.kb.demo.service.DepartmentAccessService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,6 +29,12 @@ public class VectorSearchController {
     
     @Autowired
     private VectorSearchService vectorSearchService;
+
+    @Autowired
+    private DocumentService documentService;
+
+    @Autowired
+    private DepartmentAccessService departmentAccessService;
     
     /**
      * 向量检索文档
@@ -41,7 +51,7 @@ public class VectorSearchController {
             @RequestParam(defaultValue = "0.7") double minScore) {
         
         List<Document> documents = vectorSearchService.searchDocuments(query, maxResults, minScore);
-        return ResponseEntity.ok(documents);
+        return ResponseEntity.ok(departmentAccessService.filterReadableDocuments(documents));
     }
     
     /**
@@ -67,7 +77,8 @@ public class VectorSearchController {
         Pageable pageable = PageRequest.of(page, size, Sort.by(sortDirection, sort));
         
         Page<Document> documents = vectorSearchService.searchDocuments(query, pageable);
-        return ResponseEntity.ok(documents);
+        List<Document> readable = departmentAccessService.filterReadableDocuments(documents.getContent());
+        return ResponseEntity.ok(new PageImpl<>(readable, pageable, readable.size()));
     }
     
     /**
@@ -87,7 +98,7 @@ public class VectorSearchController {
             @RequestParam(defaultValue = "0.4") double keywordWeight) {
         
         List<Document> documents = vectorSearchService.hybridSearch(query, maxResults, vectorWeight, keywordWeight);
-        return ResponseEntity.ok(documents);
+        return ResponseEntity.ok(departmentAccessService.filterReadableDocuments(documents));
     }
     
     /**
@@ -104,6 +115,13 @@ public class VectorSearchController {
             @RequestParam String query,
             @RequestParam(defaultValue = "3") int maxSegments) {
         
+        Document document = documentService.getDocumentById(documentId);
+        if (document == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!departmentAccessService.canRead(document)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         List<String> segments = vectorSearchService.getRelevantSegments(documentId, query, maxSegments);
         return ResponseEntity.ok(segments);
     }
@@ -113,6 +131,7 @@ public class VectorSearchController {
      * @return 统计信息
      */
     @GetMapping("/stats")
+    @PreAuthorize("hasAuthority('document:read')")
     public ResponseEntity<Map<String, Object>> getStats() {
         // 这里可以添加一些统计信息，比如向量存储的文档数量等
         Map<String, Object> stats = Map.of(

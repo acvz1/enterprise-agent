@@ -16,13 +16,16 @@ public class HybridRetrievalService {
     private final ElasticsearchSearchService elasticsearchSearchService;
     private final RrfFusionService rrfFusionService;
     private final RetrievalResultService retrievalResultService;
+    private final DepartmentAccessService departmentAccessService;
 
     public HybridRetrievalService(VectorSearchService vectorSearchService,
-            ElasticsearchSearchService elasticsearchSearchService, RrfFusionService rrfFusionService,RetrievalResultService retrievalResultService) {
+            ElasticsearchSearchService elasticsearchSearchService, RrfFusionService rrfFusionService,
+            RetrievalResultService retrievalResultService, DepartmentAccessService departmentAccessService) {
         this.vectorSearchService = vectorSearchService;
         this.elasticsearchSearchService = elasticsearchSearchService;
         this.rrfFusionService = rrfFusionService;
         this.retrievalResultService=retrievalResultService;
+        this.departmentAccessService = departmentAccessService;
     }
 
     /**
@@ -37,8 +40,10 @@ public class HybridRetrievalService {
      * @throws IOException Elasticsearch 查询失败时抛出
      */
     public List<FusedRetrievalCandidate> search(String query,int candidateLimit,double minVectorScore,int topK)throws IOException{
-        List<RetrievalCandidate>redisCandidates=vectorSearchService.searchVectorCandidates(query, candidateLimit, minVectorScore);
-        List<RetrievalCandidate>elasticsearchCandidates=elasticsearchSearchService.searchBm25Candidates(query, candidateLimit);
+        DepartmentAccessService.AccessScope scope = departmentAccessService.currentScope();
+        java.util.Set<Long> allowedDocumentIds = scope.global() ? null : departmentAccessService.readableDocumentIds(scope);
+        List<RetrievalCandidate>redisCandidates=vectorSearchService.searchVectorCandidates(query, candidateLimit, minVectorScore, allowedDocumentIds);
+        List<RetrievalCandidate>elasticsearchCandidates=elasticsearchSearchService.searchBm25Candidates(query, candidateLimit, allowedDocumentIds);
         return rrfFusionService.fuse(redisCandidates, elasticsearchCandidates, topK);
     }
 
@@ -53,8 +58,12 @@ public class HybridRetrievalService {
      * @throws IOException Elasticsearch 查询失败时抛出
      */
     public List<RetrievalHit> searchHits(String query,int candidateLimit,double minVectorScore,int topK)throws IOException{
-        List<FusedRetrievalCandidate>candidates=search(query,candidateLimit,minVectorScore,topK);
-        List<RetrievalHit>hits=retrievalResultService.assembleHits(candidates);
+        DepartmentAccessService.AccessScope scope = departmentAccessService.currentScope();
+        java.util.Set<Long> allowedDocumentIds = scope.global() ? null : departmentAccessService.readableDocumentIds(scope);
+        List<RetrievalCandidate> redisCandidates = vectorSearchService.searchVectorCandidates(query, candidateLimit, minVectorScore, allowedDocumentIds);
+        List<RetrievalCandidate> elasticsearchCandidates = elasticsearchSearchService.searchBm25Candidates(query, candidateLimit, allowedDocumentIds);
+        List<FusedRetrievalCandidate> candidates = rrfFusionService.fuse(redisCandidates, elasticsearchCandidates, topK);
+        List<RetrievalHit>hits=retrievalResultService.assembleHits(candidates, scope);
         return hits;
     }
 

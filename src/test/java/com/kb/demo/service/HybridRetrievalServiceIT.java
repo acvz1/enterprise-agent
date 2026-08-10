@@ -24,9 +24,11 @@ import redis.clients.jedis.JedisPooled;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * 使用本地 Redis Stack 和 Elasticsearch 验证真实双路候选能够合并为同一个 chunk。
@@ -43,10 +45,15 @@ class HybridRetrievalServiceIT {
     private EmbeddingStore<TextSegment> redisEmbeddingStore;
     private JedisPooled redisCleanupClient;
 
+    private int elasticsearchPort() {
+        return Integer.parseInt(
+                System.getenv().getOrDefault("ELASTICSEARCH_PORT", "9200"));
+    }
+
     @BeforeEach
     void setUp() throws IOException {
         RestClient restClient = RestClient.builder(
-                new HttpHost("localhost", 9200, "http")
+                new HttpHost("localhost", elasticsearchPort(), "http")
         ).build();
         transport = new RestClientTransport(restClient, new JacksonJsonpMapper());
         elasticsearchSearchService =
@@ -113,11 +120,15 @@ class HybridRetrievalServiceIT {
         ReflectionTestUtils.setField(vectorSearchService, "redisHost", "localhost");
         ReflectionTestUtils.setField(vectorSearchService, "redisPort", 6379);
 
+        DepartmentAccessService departmentAccessService = mock(DepartmentAccessService.class);
+        when(departmentAccessService.currentScope())
+                .thenReturn(new DepartmentAccessService.AccessScope(true, Set.of()));
         HybridRetrievalService service = new HybridRetrievalService(
                 vectorSearchService,
                 elasticsearchSearchService,
                 new RrfFusionService(),
-                mock(RetrievalResultService.class)
+                mock(RetrievalResultService.class),
+                departmentAccessService
         );
 
         List<FusedRetrievalCandidate> result =

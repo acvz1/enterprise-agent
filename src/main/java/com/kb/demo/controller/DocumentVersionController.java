@@ -6,6 +6,8 @@ import com.kb.demo.service.DocumentService;
 import com.kb.demo.entity.Document;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -29,15 +31,16 @@ public class DocumentVersionController {
      * 创建新版本
      * @param documentId 文档ID
      * @param changeSummary 变更摘要
-     * @param createdBy 创建者
      * @return 创建的版本
      */
     @PostMapping
+    @PreAuthorize("hasAuthority('document:write') and @departmentAccessService.canReadDocumentId(#documentId)")
     public ResponseEntity<DocumentVersion> createVersion(
             @PathVariable Long documentId,
             @RequestParam String changeSummary,
-            @RequestParam String createdBy) {
-        DocumentVersion version = documentVersionService.createVersion(documentId, changeSummary, createdBy);
+            Authentication authentication) {
+        DocumentVersion version = documentVersionService.createVersion(
+                documentId, changeSummary, authentication.getName());
         
         // 更新文档的当前版本号
         Document document = documentService.getDocumentById(documentId);
@@ -53,6 +56,7 @@ public class DocumentVersionController {
      * @return 版本列表
      */
     @GetMapping
+    @PreAuthorize("hasAuthority('document:read') and @departmentAccessService.canReadDocumentId(#documentId)")
     public ResponseEntity<List<DocumentVersion>> getVersionsByDocumentId(@PathVariable Long documentId) {
         List<DocumentVersion> versions = documentVersionService.getVersionsByDocumentId(documentId);
         return ResponseEntity.ok(versions);
@@ -64,6 +68,7 @@ public class DocumentVersionController {
      * @return 最新版本
      */
     @GetMapping("/latest")
+    @PreAuthorize("hasAuthority('document:read') and @departmentAccessService.canReadDocumentId(#documentId)")
     public ResponseEntity<DocumentVersion> getLatestVersionByDocumentId(@PathVariable Long documentId) {
         DocumentVersion version = documentVersionService.getLatestVersionByDocumentId(documentId);
         if (version == null) {
@@ -79,6 +84,7 @@ public class DocumentVersionController {
      * @return 特定版本
      */
     @GetMapping("/{versionNumber}")
+    @PreAuthorize("hasAuthority('document:read') and @departmentAccessService.canReadDocumentId(#documentId)")
     public ResponseEntity<DocumentVersion> getVersionByDocumentIdAndVersionNumber(
             @PathVariable Long documentId,
             @PathVariable Integer versionNumber) {
@@ -93,16 +99,17 @@ public class DocumentVersionController {
      * 恢复到指定版本
      * @param documentId 文档ID
      * @param versionNumber 版本号
-     * @param createdBy 操作人
      * @return 更新后的文档
      */
     @PostMapping("/{versionNumber}/revert")
+    @PreAuthorize("hasAuthority('document:write') and @departmentAccessService.canReadDocumentId(#documentId)")
     public ResponseEntity<?> revertToVersion(
             @PathVariable Long documentId,
             @PathVariable Integer versionNumber,
-            @RequestParam String createdBy) {
+            Authentication authentication) {
         try {
-            Object document = documentVersionService.revertToVersion(documentId, versionNumber, createdBy);
+            Object document = documentVersionService.revertToVersion(
+                    documentId, versionNumber, authentication.getName());
             return ResponseEntity.ok(document);
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -117,6 +124,7 @@ public class DocumentVersionController {
      * @return 差异信息
      */
     @GetMapping("/compare")
+    @PreAuthorize("hasAuthority('document:read') and @departmentAccessService.canReadDocumentId(#documentId)")
     public ResponseEntity<?> compareVersions(
             @PathVariable Long documentId,
             @RequestParam Integer versionNumber1,

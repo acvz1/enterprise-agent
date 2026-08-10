@@ -83,7 +83,7 @@ public class ResponseEvaluationService {
         
         answerEvaluationRepository.save(evaluation);
         
-        logger.info("问答评估完成: sessionId={}, 相关性={:.2f}, 完整性={:.2f}, 幻觉={:.2f}, 综合={:.2f}, 级别={}",
+        logger.info("问答评估完成: sessionId={}, 相关性={}, 完整性={}, 幻觉={}, 综合={}, 级别={}",
                 sessionId, relevanceScore, completenessScore, hallucinationScore, overallScore, level.getDescription());
         
         return evaluation;

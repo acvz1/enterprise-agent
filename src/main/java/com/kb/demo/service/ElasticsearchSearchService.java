@@ -5,12 +5,14 @@ import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.search.Hit;
 import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 import co.elastic.clients.elasticsearch.core.DeleteByQueryResponse;
+import co.elastic.clients.elasticsearch._types.FieldValue;
 import org.springframework.stereotype.Service;
 import com.kb.demo.dto.ElasticsearchChunkDocument;
 import com.kb.demo.dto.RetrievalCandidate;
 import com.kb.demo.dto.RetrievalSource;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Set;
 import java.io.IOException;
 
 
@@ -144,18 +146,27 @@ public class ElasticsearchSearchService {
      * @throws IOException
      */
     public List<RetrievalCandidate> searchBm25Candidates(String query,int maxResults)throws IOException{
+        return searchBm25Candidates(query, maxResults, null);
+    }
+
+    /** BM25 在 Elasticsearch 查询阶段按可见文档 ID 过滤，结果进入 RRF 前已完成权限收口。 */
+    public List<RetrievalCandidate> searchBm25Candidates(String query, int maxResults, Set<Long> allowedDocumentIds)throws IOException{
         createIndexIfAbsent();
-        SearchResponse<ElasticsearchChunkDocument> response=elasticsearchClient
-                                                            .search(request->request
-                                                                            .index(INDEX_NAME)
-                                                                            .size(maxResults)
-                                                                            .query(queryBuilder->queryBuilder
-                                                                                                .match(match->match
-                                                                                                            .field("content")
-                                                                                                            .query(query)
-                                                                                                )
-                                                                            ),ElasticsearchChunkDocument.class
-                                                            );
+        if (allowedDocumentIds != null && allowedDocumentIds.isEmpty()) {
+            return List.of();
+        }
+        SearchResponse<ElasticsearchChunkDocument> response = elasticsearchClient.search(request -> {
+            request.index(INDEX_NAME).size(maxResults);
+            if (allowedDocumentIds == null) {
+                return request.query(queryBuilder -> queryBuilder
+                        .match(match -> match.field("content").query(query)));
+            }
+            return request.query(queryBuilder -> queryBuilder.bool(bool -> bool
+                    .must(must -> must.match(match -> match.field("content").query(query)))
+                    .filter(filter -> filter.terms(terms -> terms
+                            .field("documentId")
+                            .terms(values -> values.value(allowedDocumentIds.stream().map(FieldValue::of).toList()))))));
+        }, ElasticsearchChunkDocument.class);
         /* 
         SearchResponse
         └── HitsMetadata

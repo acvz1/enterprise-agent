@@ -4,6 +4,7 @@ import com.kb.demo.dto.DocumentTagDTO;
 import com.kb.demo.service.DocumentTagService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -24,6 +25,7 @@ public class DocumentTagController {
      * @return 标签列表
      */
     @GetMapping
+    @PreAuthorize("hasAuthority('document:read')")
     public ResponseEntity<List<DocumentTagDTO>> getAllTags() {
         List<DocumentTagDTO> tags = documentTagService.getAllTags();
         return ResponseEntity.ok(tags);
@@ -35,6 +37,7 @@ public class DocumentTagController {
      * @return 标签信息
      */
     @GetMapping("/{id}")
+    @PreAuthorize("hasAuthority('document:read')")
     public ResponseEntity<DocumentTagDTO> getTagById(@PathVariable Long id) {
         DocumentTagDTO tag = documentTagService.getTagById(id);
         return ResponseEntity.ok(tag);
@@ -46,6 +49,7 @@ public class DocumentTagController {
      * @return 创建后的标签
      */
     @PostMapping
+    @PreAuthorize("hasAuthority('document:write')")
     public ResponseEntity<DocumentTagDTO> createTag(@RequestBody DocumentTagDTO tagDTO) {
         DocumentTagDTO createdTag = documentTagService.saveTag(tagDTO);
         return ResponseEntity.ok(createdTag);
@@ -58,6 +62,7 @@ public class DocumentTagController {
      * @return 更新后的标签
      */
     @PutMapping("/{id}")
+    @PreAuthorize("hasAuthority('document:write')")
     public ResponseEntity<DocumentTagDTO> updateTag(@PathVariable Long id, @RequestBody DocumentTagDTO tagDTO) {
         tagDTO.setId(id);
         DocumentTagDTO updatedTag = documentTagService.saveTag(tagDTO);
@@ -70,6 +75,7 @@ public class DocumentTagController {
      * @return 操作结果
      */
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasAuthority('document:delete') or hasRole('ADMIN')")
     public ResponseEntity<Void> deleteTag(@PathVariable Long id) {
         documentTagService.deleteTag(id);
         return ResponseEntity.ok().build();

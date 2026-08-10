@@ -9,6 +9,7 @@ import com.kb.demo.service.DocumentService;
 import com.kb.demo.service.DocumentVersionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -45,6 +46,9 @@ public class DocumentController {
     @Autowired
     private com.kb.demo.service.DocumentChunkService documentChunkService;
 
+    @Autowired
+    private com.kb.demo.service.DepartmentAccessService departmentAccessService;
+
     /**
      * 获取所有文档（分页）
      * @param page 页码（从0开始）
@@ -66,7 +70,8 @@ public class DocumentController {
         Pageable pageable = PageRequest.of(page, size, Sort.by(sortDirection, sort));
         
         Page<Document> documents = documentService.getAllDocuments(pageable);
-        return ResponseEntity.ok(documents);
+        List<Document> readable = departmentAccessService.filterReadableDocuments(documents.getContent());
+        return ResponseEntity.ok(new PageImpl<>(readable, pageable, readable.size()));
     }
 
     @GetMapping("/{id}")
@@ -75,6 +80,9 @@ public class DocumentController {
         Document document = documentService.getDocumentById(id);
         if (document == null) {
             return ResponseEntity.notFound().build();
+        }
+        if (!departmentAccessService.canRead(document)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
         return ResponseEntity.ok(document);
     }
@@ -91,13 +99,17 @@ public class DocumentController {
         if (document.isEmpty()) {
             return ResponseEntity.notFound().build();
         }
+        if (!departmentAccessService.canRead(document.get())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         return ResponseEntity.ok(document.get());
     }
 
     @PostMapping
     @PreAuthorize("hasAuthority('document:write')")
     public ResponseEntity<Document> createDocument(@RequestBody Document document) {
-        Document savedDocument = documentService.saveDocument(document);
+        departmentAccessService.applyNewDocumentDepartments(document, document.getVisibleDepartmentIds());
+        Document savedDocument = documentService.saveDocument(document, true);
         return ResponseEntity.status(HttpStatus.CREATED).body(savedDocument);
     }
 
@@ -113,8 +125,9 @@ public class DocumentController {
         Document document = new Document();
         document.setTitle(documentCreateDTO.getTitle());
         document.setContent(documentCreateDTO.getContent());
+        departmentAccessService.applyNewDocumentDepartments(document, documentCreateDTO.getVisibleDepartmentIds());
         
-        Document savedDocument = documentService.saveDocument(document);
+        Document savedDocument = documentService.saveDocument(document, true);
         
         // 如果有分类或标签，设置关联关系
         if ((documentCreateDTO.getCategoryIds() != null && !documentCreateDTO.getCategoryIds().isEmpty()) ||
@@ -144,14 +157,33 @@ public class DocumentController {
         if (existingDocument == null) {
             return ResponseEntity.notFound().build();
         }
+        if (!departmentAccessService.canRead(existingDocument)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         
         document.setId(id);
         Document updatedDocument = documentService.updateDocumentWithVersion(id, document);
         return ResponseEntity.ok(updatedDocument);
     }
 
+    /** 修改文档可见部门后重走保存链路，确保后续检索仍由 MySQL 权威范围收口。 */
+    @PutMapping("/{id}/visible-departments")
+    @PreAuthorize("hasAuthority('document:write')")
+    public ResponseEntity<Document> updateVisibleDepartments(@PathVariable Long id,
+            @RequestBody com.kb.demo.dto.DepartmentIdsRequest request) {
+        Document document = documentService.getDocumentById(id);
+        if (document == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!departmentAccessService.canRead(document)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        departmentAccessService.setDocumentDepartments(document, request.getDepartmentIds());
+        return ResponseEntity.ok(documentService.saveDocument(document, false));
+    }
+
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAuthority('document:delete') or hasRole('ADMIN')")
+    @PreAuthorize("(hasAuthority('document:delete') or hasRole('ADMIN')) and @departmentAccessService.canReadDocumentId(#id)")
     public ResponseEntity<Void> deleteDocument(@PathVariable Long id) {
         Document document = documentService.getDocumentById(id);
         if (document == null) {
@@ -199,7 +231,7 @@ public class DocumentController {
     @PreAuthorize("hasAuthority('document:read')")
     public ResponseEntity<List<Document>> searchDocumentsByTitle(@RequestParam String title) {
         List<Document> documents = documentService.searchDocumentsByTitle(title);
-        return ResponseEntity.ok(documents);
+        return ResponseEntity.ok(departmentAccessService.filterReadableDocuments(documents));
     }
     
     /**
@@ -211,7 +243,7 @@ public class DocumentController {
     @PreAuthorize("hasAuthority('document:read')")
     public ResponseEntity<List<Document>> searchDocumentsByContent(@RequestParam String content) {
         List<Document> documents = documentService.searchDocumentsByContent(content);
-        return ResponseEntity.ok(documents);
+        return ResponseEntity.ok(departmentAccessService.filterReadableDocuments(documents));
     }
 
     /**
@@ -229,6 +261,9 @@ public class DocumentController {
         Document document = documentService.getDocumentById(id);
         if (document == null) {
             return ResponseEntity.notFound().build();
+        }
+        if (!departmentAccessService.canRead(document)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
         
         documentCategoryTagDTO.setDocumentId(id);
@@ -248,6 +283,9 @@ public class DocumentController {
         if (document == null) {
             return ResponseEntity.notFound().build();
         }
+        if (!departmentAccessService.canRead(document)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         
         List<Long> categoryIds = documentCategoryTagService.getDocumentCategoryIds(id);
         return ResponseEntity.ok(categoryIds);
@@ -264,6 +302,9 @@ public class DocumentController {
         Document document = documentService.getDocumentById(id);
         if (document == null) {
             return ResponseEntity.notFound().build();
+        }
+        if (!departmentAccessService.canRead(document)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
         
         List<Long> tagIds = documentCategoryTagService.getDocumentTagIds(id);
@@ -282,6 +323,9 @@ public class DocumentController {
         if (document == null) {
             return ResponseEntity.notFound().build();
         }
+        if (!departmentAccessService.canRead(document)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         
         List<String> categoryNames = documentCategoryTagService.getDocumentCategoryNames(id);
         return ResponseEntity.ok(categoryNames);
@@ -299,6 +343,9 @@ public class DocumentController {
         if (document == null) {
             return ResponseEntity.notFound().build();
         }
+        if (!departmentAccessService.canRead(document)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         
         List<String> tagNames = documentCategoryTagService.getDocumentTagNames(id);
         return ResponseEntity.ok(tagNames);
@@ -313,7 +360,7 @@ public class DocumentController {
     @PreAuthorize("hasAuthority('document:read')")
     public ResponseEntity<List<Document>> getDocumentsByCategory(@PathVariable Long categoryId) {
         List<Document> documents = documentService.findDocumentsByCategory(categoryId);
-        return ResponseEntity.ok(documents);
+        return ResponseEntity.ok(departmentAccessService.filterReadableDocuments(documents));
     }
     
     /**
@@ -325,7 +372,7 @@ public class DocumentController {
     @PreAuthorize("hasAuthority('document:read')")
     public ResponseEntity<List<Document>> getDocumentsByTag(@PathVariable Long tagId) {
         List<Document> documents = documentService.findDocumentsByTag(tagId);
-        return ResponseEntity.ok(documents);
+        return ResponseEntity.ok(departmentAccessService.filterReadableDocuments(documents));
     }
     
     /**
@@ -338,7 +385,7 @@ public class DocumentController {
     public ResponseEntity<List<Document>> getDocumentsByCategories(@RequestParam String categoryIds) {
         List<Long> ids = parseIds(categoryIds);
         List<Document> documents = documentService.findDocumentsByCategories(ids);
-        return ResponseEntity.ok(documents);
+        return ResponseEntity.ok(departmentAccessService.filterReadableDocuments(documents));
     }
     
     /**
@@ -351,7 +398,7 @@ public class DocumentController {
     public ResponseEntity<List<Document>> getDocumentsByTags(@RequestParam String tagIds) {
         List<Long> ids = parseIds(tagIds);
         List<Document> documents = documentService.findDocumentsByTags(ids);
-        return ResponseEntity.ok(documents);
+        return ResponseEntity.ok(departmentAccessService.filterReadableDocuments(documents));
     }
     
     /**
@@ -366,7 +413,7 @@ public class DocumentController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endDate) {
         List<Document> documents = documentService.findDocumentsByDateRange(startDate, endDate);
-        return ResponseEntity.ok(documents);
+        return ResponseEntity.ok(departmentAccessService.filterReadableDocuments(documents));
     }
     
     /**
@@ -407,7 +454,8 @@ public class DocumentController {
         List<Long> tIds = tagIds != null && !tagIds.isEmpty() ? parseIds(tagIds) : null;
         
         Page<Document> documents = documentService.advancedSearch(title, content, catIds, tIds, fileType, startDate, endDate, pageable);
-        return ResponseEntity.ok(documents);
+        List<Document> readable = departmentAccessService.filterReadableDocuments(documents.getContent());
+        return ResponseEntity.ok(new PageImpl<>(readable, pageable, readable.size()));
     }
     
     /**
@@ -435,6 +483,12 @@ public class DocumentController {
         if (document == null) {
             return ResponseEntity.notFound().build();
         }
+        if (!departmentAccessService.canRead(document)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        if (!departmentAccessService.canRead(document)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         
         Integer currentVersion = document.getCurrentVersion();
         if (currentVersion == null) {
@@ -449,7 +503,7 @@ public class DocumentController {
      * @return 处理结果
      */
     @PostMapping("/vectorize/all")
-    @PreAuthorize("hasAuthority('document:write') or hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> vectorizeAllDocuments() {
         try {
             int totalChunks = documentChunkService.processAllDocuments();
@@ -474,7 +528,7 @@ public class DocumentController {
      * @return 处理结果
      */
     @PostMapping("/{id}/vectorize")
-    @PreAuthorize("hasAuthority('document:write')")
+    @PreAuthorize("hasAuthority('document:write') and @departmentAccessService.canReadDocumentId(#id)")
     public ResponseEntity<Map<String, Object>> vectorizeDocument(@PathVariable Long id) {
         try {
             Document document = documentService.getDocumentById(id);

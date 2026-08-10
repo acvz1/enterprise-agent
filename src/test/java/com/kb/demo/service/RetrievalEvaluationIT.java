@@ -31,6 +31,7 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class RetrievalEvaluationIT {
     private static final Set<Long> EVALUATION_DOCUMENT_IDS =
@@ -46,10 +47,15 @@ public class RetrievalEvaluationIT {
     private VectorSearchService vectorSearchService;
     private HybridRetrievalService hybridRetrievalService;
 
+    private int elasticsearchPort() {
+        return Integer.parseInt(
+                System.getenv().getOrDefault("ELASTICSEARCH_PORT", "9200"));
+    }
+
     @BeforeEach
     void setUp() throws IOException {
         RestClient restClient = RestClient.builder(
-                new HttpHost("localhost", 9200, "http")
+                new HttpHost("localhost", elasticsearchPort(), "http")
         ).build();
         transport = new RestClientTransport(restClient, new JacksonJsonpMapper());
         elasticsearchSearchService =
@@ -67,11 +73,15 @@ public class RetrievalEvaluationIT {
         vectorSearchService = new VectorSearchService();
         ReflectionTestUtils.setField(vectorSearchService, "redisHost", "localhost");
         ReflectionTestUtils.setField(vectorSearchService, "redisPort", 6379);
+        DepartmentAccessService departmentAccessService = mock(DepartmentAccessService.class);
+        when(departmentAccessService.currentScope())
+                .thenReturn(new DepartmentAccessService.AccessScope(true, Set.of()));
         hybridRetrievalService = new HybridRetrievalService(
                 vectorSearchService,
                 elasticsearchSearchService,
                 new RrfFusionService(),
-                mock(RetrievalResultService.class)
+                mock(RetrievalResultService.class),
+                departmentAccessService
         );
 
         elasticsearchSearchService.createIndexIfAbsent();
