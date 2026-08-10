@@ -27,7 +27,7 @@ public class AnalyticsController {
      * 获取Dashboard统计数据
      */
     @GetMapping("/dashboard")
-    @PreAuthorize("hasAuthority('document:read')")
+    @PreAuthorize("hasAuthority('dashboard:view')")
     public ResponseEntity<Map<String, Object>> getDashboardStats() {
         try {
             logger.info("接收Dashboard统计数据请求");

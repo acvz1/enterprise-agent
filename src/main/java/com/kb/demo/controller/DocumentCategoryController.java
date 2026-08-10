@@ -4,6 +4,7 @@ import com.kb.demo.dto.DocumentCategoryDTO;
 import com.kb.demo.service.DocumentCategoryService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -24,6 +25,7 @@ public class DocumentCategoryController {
      * @return 分类列表
      */
     @GetMapping
+    @PreAuthorize("hasAuthority('document:read')")
     public ResponseEntity<List<DocumentCategoryDTO>> getAllCategories() {
         List<DocumentCategoryDTO> categories = documentCategoryService.getAllCategories();
         return ResponseEntity.ok(categories);
@@ -35,6 +37,7 @@ public class DocumentCategoryController {
      * @return 分类信息
      */
     @GetMapping("/{id}")
+    @PreAuthorize("hasAuthority('document:read')")
     public ResponseEntity<DocumentCategoryDTO> getCategoryById(@PathVariable Long id) {
         DocumentCategoryDTO category = documentCategoryService.getCategoryById(id);
         return ResponseEntity.ok(category);
@@ -46,6 +49,7 @@ public class DocumentCategoryController {
      * @return 创建后的分类
      */
     @PostMapping
+    @PreAuthorize("hasAuthority('document:write')")
     public ResponseEntity<DocumentCategoryDTO> createCategory(@RequestBody DocumentCategoryDTO categoryDTO) {
         DocumentCategoryDTO createdCategory = documentCategoryService.saveCategory(categoryDTO);
         return ResponseEntity.ok(createdCategory);
@@ -58,6 +62,7 @@ public class DocumentCategoryController {
      * @return 更新后的分类
      */
     @PutMapping("/{id}")
+    @PreAuthorize("hasAuthority('document:write')")
     public ResponseEntity<DocumentCategoryDTO> updateCategory(@PathVariable Long id, @RequestBody DocumentCategoryDTO categoryDTO) {
         categoryDTO.setId(id);
         DocumentCategoryDTO updatedCategory = documentCategoryService.saveCategory(categoryDTO);
@@ -70,6 +75,7 @@ public class DocumentCategoryController {
      * @return 操作结果
      */
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasAuthority('document:delete') or hasRole('ADMIN')")
     public ResponseEntity<Void> deleteCategory(@PathVariable Long id) {
         documentCategoryService.deleteCategory(id);
         return ResponseEntity.ok().build();

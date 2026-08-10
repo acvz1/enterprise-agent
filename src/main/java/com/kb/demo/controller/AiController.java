@@ -3,10 +3,14 @@ package com.kb.demo.controller;
 import com.kb.demo.service.AiService;
 import com.kb.demo.service.MetricsService;
 import com.kb.demo.service.ResponseEvaluationService;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.concurrent.DelegatingSecurityContextExecutorService;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -39,10 +43,16 @@ public class AiController {
         Executors.newCachedThreadPool()
     );
 
+    @PreDestroy
+    public void shutdown() {
+        executor.shutdown();
+    }
+
     @PostMapping("/ask")
+    @PreAuthorize("hasAuthority('qa:ask') and hasAuthority('document:read')")
     public Map<String, Object> ask(@RequestBody Map<String, String> request) {
         String question = request.get("question");
-        String sessionId = request.get("sessionId");
+        String sessionId = scopedSessionId(request.get("sessionId"));
         String model = request.get("model"); // 可选参数，不指定则使用默认模型
         
         // 记录问答请求
@@ -64,10 +74,11 @@ public class AiController {
     }
 
     @PostMapping(value = "/ask-stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @PreAuthorize("hasAuthority('qa:ask') and hasAuthority('document:read')")
     @CrossOrigin(originPatterns = {"*"}, allowCredentials = "true")  // 使用 originPatterns
     public SseEmitter askStream(@RequestBody Map<String, String> request) {
         String question = request.get("question");
-        String sessionId = request.get("sessionId");
+        String sessionId = scopedSessionId(request.get("sessionId"));
         String model = request.get("model"); // 可选参数，不指定则使用默认模型
         
         logger.info("收到流式请求 - 问题: {}, 会话ID: {}, 模型: {}", question, sessionId, model);
@@ -100,6 +111,7 @@ public class AiController {
     }
 
     @PostMapping("/clear-cache")
+    @PreAuthorize("hasRole('ADMIN')")
     public Map<String, String> clearCache() {
         // 清除所有缓存，不限制于特定会话
         aiService.clearAllCache();
@@ -108,15 +120,17 @@ public class AiController {
     }
     
     @GetMapping("/models")
+    @PreAuthorize("hasAuthority('qa:ask')")
     public Map<String, Object> getAvailableModels() {
         // 获取可用的模型列表
         return aiService.getAvailableModels();
     }
     
     @GetMapping("/session/{sessionId}")
+    @PreAuthorize("hasAuthority('qa:ask')")
     public Map<String, Object> getSessionInfo(@PathVariable String sessionId) {
         // 获取会话信息
-        return aiService.getSessionInfo(sessionId);
+        return aiService.getSessionInfo(scopedSessionId(sessionId));
     }
     
     /**
@@ -124,9 +138,10 @@ public class AiController {
      * 在前端展示完整回答后调用此接口
      */
     @PostMapping("/evaluate")
+    @PreAuthorize("hasAuthority('qa:ask')")
     public Map<String, Object> evaluateAnswer(@RequestBody Map<String, Object> request) {
         try {
-            String sessionId = (String) request.get("sessionId");
+            String sessionId = scopedSessionId((String) request.get("sessionId"));
             String question = (String) request.get("question");
             String answer = (String) request.get("answer");
             String model = (String) request.get("model");
@@ -166,6 +181,7 @@ public class AiController {
      * @param feedback 反馈: -1(差), 0(中立), 1(好)
      */
     @PostMapping("/feedback/{evaluationId}")
+    @PreAuthorize("hasAuthority('qa:ask')")
     public Map<String, Object> recordFeedback(
             @PathVariable Long evaluationId,
             @RequestParam Integer feedback) {
@@ -176,5 +192,20 @@ public class AiController {
             logger.error("保存反馈失败", e);
             return Map.of("success", false, "message", "保存反馈失败");
         }
+    }
+
+    /**
+     * 将客户端会话 ID 限定在当前登录用户命名空间内，避免不同账号共享缓存和对话记忆。
+     */
+    private String scopedSessionId(String clientSessionId) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new IllegalStateException("无法确定当前登录用户");
+        }
+
+        String normalizedSessionId = clientSessionId == null || clientSessionId.isBlank()
+                ? "default"
+                : clientSessionId;
+        return authentication.getName() + ":" + normalizedSessionId;
     }
 }

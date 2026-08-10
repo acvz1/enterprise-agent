@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * 向量检索服务类
@@ -180,6 +181,14 @@ public class VectorSearchService {
      * @return 匹配切片列表
      */
     public List<RetrievalCandidate> searchVectorCandidates(String query,int maxResults,double minScore){
+        return searchVectorCandidates(query, maxResults, minScore, null);
+    }
+
+    /**
+     * Redis 适配器不支持 metadata filter，因此在返回候选、进入 RRF 前按允许文档 ID 收口。
+     */
+    public List<RetrievalCandidate> searchVectorCandidates(String query, int maxResults, double minScore,
+            Set<Long> allowedDocumentIds){
         try {
             // 创建嵌入模型
             EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
@@ -203,7 +212,8 @@ public class VectorSearchService {
             // 创建检索请求，确保设置maxResults参数
             EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
                     .queryEmbedding(queryEmbedding)
-                    .maxResults(maxResults)
+                    // 多取一小段候选，避免未授权结果占满首屏后影响合法结果的召回。
+                    .maxResults(allowedDocumentIds == null ? maxResults : maxResults * 3)
                     .minScore(minScore)
                     .build();
             logger.debug("检索请求创建完成，maxResults: {}, minScore: {}", maxResults, minScore);
@@ -219,7 +229,10 @@ public class VectorSearchService {
                 RetrievalCandidate candidate=toRetrievalCandidate(matches.get(index), index+1);
                 if(candidate!=null)candidates.add(candidate);
             }
-            return candidates;
+            return candidates.stream()
+                    .filter(candidate -> allowedDocumentIds == null || allowedDocumentIds.contains(candidate.getDocumentId()))
+                    .limit(maxResults)
+                    .toList();
         }catch(Exception e){
             logger.error("Reddis 向量候选检索失败",e);
             return List.of();

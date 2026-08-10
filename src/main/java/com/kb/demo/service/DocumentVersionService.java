@@ -25,6 +25,9 @@ public class DocumentVersionService {
     
     @Autowired
     private DocumentRepository documentRepository;
+
+    @Autowired
+    private DocumentChunkService documentChunkService;
     
     /**
      * 获取DocumentVersionRepository
@@ -139,6 +142,9 @@ public class DocumentVersionService {
         
         // 创建新版本记录这次回滚操作
         createVersion(documentId, "回滚到版本 " + versionNumber, createdBy);
+
+        // 恢复正文后同步重建 MySQL chunk、Redis 向量和 Elasticsearch 索引。
+        documentChunkService.processDocument(documentId);
         
         return updatedDocument;
     }

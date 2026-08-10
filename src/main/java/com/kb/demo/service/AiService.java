@@ -39,6 +39,9 @@ public class AiService {
     private final ChatMemoryStore chatMemoryStore;
     private final ResponseEvaluationService responseEvaluationService;
     private final AnalyticsService analyticsService;
+    private final DepartmentAccessService departmentAccessService;
+
+    private static final String NO_ACCESSIBLE_EVIDENCE = "未找到当前账号可访问的知识库内容，无法基于证据回答该问题。";
 
     public AiService(
             ModelFactory modelFactory,
@@ -47,7 +50,8 @@ public class AiService {
             HybridRetrievalService hybridRetrievalService,
             ChatMemoryStore chatMemoryStore,
             ResponseEvaluationService responseEvaluationService,
-            AnalyticsService analyticsService) {
+            AnalyticsService analyticsService,
+            DepartmentAccessService departmentAccessService) {
         this.modelFactory = modelFactory;
         this.modelConfig = modelConfig;
         this.redisTemplate = redisTemplate;
@@ -55,6 +59,7 @@ public class AiService {
         this.chatMemoryStore = chatMemoryStore;
         this.responseEvaluationService = responseEvaluationService;
         this.analyticsService = analyticsService;
+        this.departmentAccessService = departmentAccessService;
     }
 
     public Map<String, Object> askQuestion(String question, String sessionId) {
@@ -63,7 +68,7 @@ public class AiService {
     
     public Map<String, Object> askQuestion(String question, String sessionId, String modelName) {
         // 生成缓存键
-        String cacheKey = "ai:answer:" + sessionId + ":" + question.hashCode() + ":" + modelName;
+        String cacheKey = answerCacheKey(sessionId, question, modelName);
         
         // 使用混合检索获取RRF TopK分块
         List<RetrievalHit> relevantHits;
@@ -71,6 +76,11 @@ public class AiService {
             relevantHits=hybridRetrievalService.searchHits(question, 10, 0.5, 5);
         }catch(IOException e){
             throw new IllegalStateException("混合检索失败",e);
+        }
+
+        if (relevantHits.isEmpty()) {
+            return Map.of("answer", NO_ACCESSIBLE_EVIDENCE, "fromCache", false,
+                    "model", modelName, "citations", List.of());
         }
 
         // 尝试从缓存获取答案
@@ -112,11 +122,19 @@ public class AiService {
         logger.info("开始处理流式请求 - 问题: {}, 会话ID: {}, 模型: {}", question, sessionId, modelName);
         
         // 生成缓存键
-        String cacheKey = "ai:answer:" + sessionId + ":" + question.hashCode() + ":" + modelName;
+        String cacheKey = answerCacheKey(sessionId, question, modelName);
         logger.debug("缓存键: {}", cacheKey);
 
         // 使用混合检索获取RRF TopK分块
         List<RetrievalHit> relevantHits =hybridRetrievalService.searchHits(question, 10, 0.5, 5);
+
+        if (relevantHits.isEmpty()) {
+            emitter.send(SseEmitter.event().name("message").data(NO_ACCESSIBLE_EVIDENCE));
+            emitter.send(SseEmitter.event().name("metadata")
+                    .data(Map.of("fromCache", false, "model", modelName, "citations", List.of())));
+            emitter.complete();
+            return;
+        }
         
         // 尝试从缓存获取答案
         String cachedAnswer = redisTemplate.opsForValue().get(cacheKey);
@@ -275,6 +293,12 @@ public class AiService {
         // 清除会话记忆
         chatMemoryStore.clear(sessionId);
         logger.info("会话缓存和记忆已清除: sessionId={}", sessionId);
+    }
+
+    /** 同一会话在不同部门数据范围下不能复用答案。 */
+    private String answerCacheKey(String sessionId, String question, String modelName) {
+        return "ai:answer:" + sessionId + ":" + departmentAccessService.currentScopeCacheKey()
+                + ":" + question.hashCode() + ":" + modelName;
     }
     
     public void clearAllCache() {

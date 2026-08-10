@@ -278,6 +278,8 @@ public class DocumentChunkService {
             // 1. 连接Redis并删除旧索引
             logger.info("[1/3] 清理旧的向量索引...");
             try {
+                long deletedRegistrations = redisVectorIndexService.clearAllRegistrations();
+                logger.info("清理 Redis 文档向量登记表完成，共删除 {} 个登记 key", deletedRegistrations);
                 // 使用RedisTemplate执行FT.DROPINDEX命令
                 redisTemplate.execute((org.springframework.data.redis.core.RedisCallback<Object>) connection -> {
                     try {

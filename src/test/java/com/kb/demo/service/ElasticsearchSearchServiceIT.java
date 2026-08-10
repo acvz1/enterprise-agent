@@ -27,10 +27,15 @@ class ElasticsearchSearchServiceIT {
     private ElasticsearchTransport transport;
     private ElasticsearchSearchService service;
 
+    private int elasticsearchPort() {
+        return Integer.parseInt(
+                System.getenv().getOrDefault("ELASTICSEARCH_PORT", "9200"));
+    }
+
     @BeforeEach
     void setUp() {
         RestClient restClient = RestClient.builder(
-                new HttpHost("localhost", 9200, "http")
+                new HttpHost("localhost", elasticsearchPort(), "http")
         ).build();
         transport = new RestClientTransport(restClient, new JacksonJsonpMapper());
         service = new ElasticsearchSearchService(new ElasticsearchClient(transport));

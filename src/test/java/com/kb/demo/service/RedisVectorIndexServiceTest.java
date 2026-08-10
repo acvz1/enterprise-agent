@@ -14,6 +14,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.lenient;
 
 @ExtendWith(MockitoExtension.class)
 class RedisVectorIndexServiceTest {
@@ -28,7 +29,7 @@ class RedisVectorIndexServiceTest {
 
     @BeforeEach
     void setUp() {
-        when(redisTemplate.opsForSet()).thenReturn(setOperations);
+        lenient().when(redisTemplate.opsForSet()).thenReturn(setOperations);
         service = new RedisVectorIndexService(redisTemplate);
     }
 
@@ -50,5 +51,19 @@ class RedisVectorIndexServiceTest {
 
         assertThat(deletedCount).isEqualTo(2L);
         verify(redisTemplate).delete("document-embeddings:document:7");
+    }
+
+    @Test
+    void clearAllRegistrationsDeletesOnlyRegistryKeys() {
+        Set<String> registryKeys = Set.of(
+                "document-embeddings:document:7",
+                "document-embeddings:document:8");
+        when(redisTemplate.keys("document-embeddings:document:*")).thenReturn(registryKeys);
+        when(redisTemplate.delete(registryKeys)).thenReturn(2L);
+
+        long deletedCount = service.clearAllRegistrations();
+
+        assertThat(deletedCount).isEqualTo(2L);
+        verify(redisTemplate).delete(registryKeys);
     }
 }

@@ -3,7 +3,6 @@ package com.kb.demo.service;
 import com.kb.demo.entity.Document;
 import com.kb.demo.repository.DocumentRepository;
 import com.kb.demo.repository.DocumentVersionRepository;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -14,8 +13,10 @@ import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @ExtendWith(MockitoExtension.class)
 class DocumentServiceSynchronizationTest {
@@ -34,12 +35,6 @@ class DocumentServiceSynchronizationTest {
 
     @InjectMocks
     private DocumentService documentService;
-
-    @BeforeEach
-    void setUp() {
-        when(documentVersionService.getDocumentVersionRepository())
-                .thenReturn(documentVersionRepository);
-    }
 
     @Test
     void updateDocumentWithVersionRebuildsRetrievalDataWhenContentChanges() {
@@ -63,7 +58,31 @@ class DocumentServiceSynchronizationTest {
         verify(documentChunkService, never()).processDocument(any());
     }
 
+    @Test
+    void saveDocumentWithProcessingBuildsRetrievalData() {
+        Document document = document(7L, "新制度", "制度正文");
+        when(documentRepository.save(document)).thenReturn(document);
+
+        documentService.saveDocument(document, true);
+
+        verify(documentChunkService).processDocument(7L);
+    }
+
+    @Test
+    void saveDocumentDoesNotHideRetrievalSynchronizationFailure() {
+        Document document = document(7L, "新制度", "制度正文");
+        when(documentRepository.save(document)).thenReturn(document);
+        doThrow(new IllegalStateException("Elasticsearch 不可用"))
+                .when(documentChunkService).processDocument(7L);
+
+        assertThatThrownBy(() -> documentService.saveDocument(document, true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Elasticsearch 不可用");
+    }
+
     private void stubExistingDocument(Document stored) {
+        when(documentVersionService.getDocumentVersionRepository())
+                .thenReturn(documentVersionRepository);
         when(documentRepository.findById(7L)).thenReturn(Optional.of(stored));
         when(documentRepository.save(any(Document.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));

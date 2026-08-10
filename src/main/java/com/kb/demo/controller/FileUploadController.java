@@ -6,6 +6,7 @@ import com.kb.demo.service.DocumentCategoryTagService;
 import com.kb.demo.service.DocumentService;
 import com.kb.demo.service.DocumentProcessingService;
 import com.kb.demo.service.FileParseService;
+import com.kb.demo.service.DepartmentAccessService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,6 +19,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 文件上传控制器
@@ -44,6 +46,9 @@ public class FileUploadController {
     
     @Autowired
     private DocumentProcessingService documentProcessingService;
+
+    @Autowired
+    private DepartmentAccessService departmentAccessService;
     
     /**
      * 上传并解析文件
@@ -52,7 +57,8 @@ public class FileUploadController {
      */
     @PostMapping("/upload")
     @PreAuthorize("hasAuthority('document:write')")
-    public ResponseEntity<?> uploadAndParseFile(@RequestParam("file") MultipartFile file) {
+    public ResponseEntity<?> uploadAndParseFile(@RequestParam("file") MultipartFile file,
+            @RequestParam(value = "visibleDepartmentIds", required = false) Set<Long> visibleDepartmentIds) {
         try {
             // 检查文件是否为空
             if (file.isEmpty()) {
@@ -76,6 +82,7 @@ public class FileUploadController {
             String fileType = fileParseService.getFileTypeDescription(file);
             String enhancedContent = String.format("文件类型: %s\n\n%s", fileType, parseResult.get("content"));
             document.setContent(enhancedContent);
+            departmentAccessService.applyNewDocumentDepartments(document, visibleDepartmentIds);
             
             // 保存文档并进行向量化处理
             Document savedDocument = documentService.saveDocument(document, true);
@@ -103,7 +110,8 @@ public class FileUploadController {
     public ResponseEntity<?> uploadAndParseFileWithCategoriesAndTags(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "categoryIds", required = false) List<Long> categoryIds,
-            @RequestParam(value = "tagIds", required = false) List<Long> tagIds) {
+            @RequestParam(value = "tagIds", required = false) List<Long> tagIds,
+            @RequestParam(value = "visibleDepartmentIds", required = false) Set<Long> visibleDepartmentIds) {
         try {
             // 检查文件是否为空
             if (file.isEmpty()) {
@@ -127,6 +135,7 @@ public class FileUploadController {
             String fileType = fileParseService.getFileTypeDescription(file);
             String enhancedContent = String.format("文件类型: %s\n\n%s", fileType, parseResult.get("content"));
             document.setContent(enhancedContent);
+            departmentAccessService.applyNewDocumentDepartments(document, visibleDepartmentIds);
             
             // 保存文档并进行向量化处理
             Document savedDocument = documentService.saveDocument(document, true);
@@ -157,6 +166,7 @@ public class FileUploadController {
      * @return 是否支持
      */
     @PostMapping("/check-type")
+    @PreAuthorize("hasAuthority('document:write')")
     public ResponseEntity<?> checkFileType(@RequestParam("file") MultipartFile file) {
         try {
             boolean supported = fileParseService.isFileTypeSupported(file);
@@ -185,7 +195,8 @@ public class FileUploadController {
      */
     @PostMapping("/upload-async")
     @PreAuthorize("hasAuthority('document:write')")
-    public ResponseEntity<?> uploadFileAsync(@RequestParam("file") MultipartFile file) {
+    public ResponseEntity<?> uploadFileAsync(@RequestParam("file") MultipartFile file,
+            @RequestParam(value = "visibleDepartmentIds", required = false) Set<Long> visibleDepartmentIds) {
         try {
             // 文件验证
             if (file.isEmpty()) {
@@ -197,7 +208,9 @@ public class FileUploadController {
             }
             
             // 异步处理文件
-            String uploadId = documentProcessingService.uploadFileAsync(file);
+            Set<Long> effectiveDepartmentIds = departmentAccessService
+                    .resolveNewDocumentDepartmentIds(visibleDepartmentIds);
+            String uploadId = documentProcessingService.uploadFileAsync(file, effectiveDepartmentIds);
             
             Map<String, String> result = new HashMap<>();
             result.put("uploadId", uploadId);
@@ -240,6 +253,7 @@ public class FileUploadController {
      * @return 支持的文件类型列表
      */
     @GetMapping("/supported-types")
+    @PreAuthorize("hasAuthority('document:write')")
     public ResponseEntity<?> getSupportedFileTypes() {
         try {
             Map<String, String> supportedTypes = new HashMap<>();

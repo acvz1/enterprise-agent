@@ -23,6 +23,7 @@ import java.util.ArrayList;
 
 @Service
 public class KnowledgeAgentService {
+    private static final String NO_ACCESSIBLE_EVIDENCE = "未找到当前账号可访问的知识库内容，无法基于证据回答该问题。";
     private final ModelFactory modelFactory;
     private final KnowledgeBaseTool knowledgeBaseTool;
     private final ObjectMapper objectMapper;
@@ -59,6 +60,9 @@ public class KnowledgeAgentService {
         List<String> toolNames=result.toolExecutions().stream()
                                     .map(execution->execution.request().name())
                                     .toList();
-        return new AgentResponse(result.content(), modelName, !toolNames.isEmpty(), toolNames, extractCitations(result));
+        List<RetrievalHit> citations = extractCitations(result);
+        boolean searchedKnowledgeBase = toolNames.contains("searchKnowledgeBase");
+        String answer = searchedKnowledgeBase && citations.isEmpty() ? NO_ACCESSIBLE_EVIDENCE : result.content();
+        return new AgentResponse(answer, modelName, !toolNames.isEmpty(), toolNames, citations);
     }
 }

@@ -31,6 +31,12 @@ public class RetrievalResultService {
      * @return 包含文档标题、分块原文、融合分数和命中来源的结果列表
      */
     public List<RetrievalHit> assembleHits(List<FusedRetrievalCandidate> candidates){
+        return assembleHits(candidates, null);
+    }
+
+    /** 以 MySQL 的部门关联作为最终权威校验。 */
+    public List<RetrievalHit> assembleHits(List<FusedRetrievalCandidate> candidates,
+            DepartmentAccessService.AccessScope scope){
         if(candidates.size()==0)return List.of();
         Set<Long> documentIds=new HashSet<>();
         Set<Integer> chunkIndexes=new HashSet<>();
@@ -39,8 +45,10 @@ public class RetrievalResultService {
             chunkIndexes.add(candidate.getChunkIndex());
         }
         //对文档id集合与chunkid集合查表求总和
-        List<DocumentChunk> chunks =
-            documentChunkRepository.findCandidateChunksWithDocument(documentIds, chunkIndexes);
+        List<DocumentChunk> chunks = scope == null || scope.global()
+                ? documentChunkRepository.findCandidateChunksWithDocument(documentIds, chunkIndexes)
+                : scope.departmentIds().isEmpty() ? List.of()
+                        : documentChunkRepository.findCandidateChunksWithDocumentAndDepartments(documentIds, chunkIndexes, scope.departmentIds());
         //建立哈希表方便用唯一索引查找对应
         Map<String,DocumentChunk>chunkByKey=new HashMap<>();
         for(DocumentChunk chunk:chunks){

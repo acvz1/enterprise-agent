@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 
 @Repository
 public interface DocumentRepository extends JpaRepository<Document, Long> {
@@ -123,4 +124,8 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
      */
     @Query("SELECT d.id FROM Document d")
     List<Long> findAllDocumentIds();
+
+    /** 只取当前数据范围可见的文档 ID，供检索候选在 RRF 前过滤。 */
+    @Query("SELECT DISTINCT d.id FROM Document d JOIN d.visibleDepartments department WHERE department.id IN :departmentIds")
+    Set<Long> findReadableDocumentIds(@Param("departmentIds") Set<Long> departmentIds);
 }

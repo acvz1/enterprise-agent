@@ -37,6 +37,9 @@ public class UploadProgress {
     
     @Column(columnDefinition = "LONGTEXT")
     private String errorMessage;  // 错误信息
+
+    @Column(name = "visible_department_ids", length = 500)
+    private String visibleDepartmentIds;
     
     @Column(nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
@@ -107,6 +110,14 @@ public class UploadProgress {
     
     public void setErrorMessage(String errorMessage) {
         this.errorMessage = errorMessage;
+    }
+
+    public String getVisibleDepartmentIds() {
+        return visibleDepartmentIds;
+    }
+
+    public void setVisibleDepartmentIds(String visibleDepartmentIds) {
+        this.visibleDepartmentIds = visibleDepartmentIds;
     }
     
     public LocalDateTime getCreatedAt() {

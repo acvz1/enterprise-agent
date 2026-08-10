@@ -42,6 +42,15 @@ public class User implements UserDetails {
         inverseJoinColumns = @JoinColumn(name = "role_id")
     )
     private Set<Role> roles = new HashSet<>();
+
+    /** 用户可访问的部门数据范围；角色权限与它分开维护。 */
+    @ManyToMany(fetch = FetchType.EAGER)
+    @JoinTable(
+        name = "user_accessible_departments",
+        joinColumns = @JoinColumn(name = "user_id"),
+        inverseJoinColumns = @JoinColumn(name = "department_id")
+    )
+    private Set<Department> accessibleDepartments = new HashSet<>();
     
     @Column(nullable = false)
     private Boolean enabled = true;
@@ -169,6 +178,14 @@ public class User implements UserDetails {
     
     public void setRoles(Set<Role> roles) {
         this.roles = roles;
+    }
+
+    public Set<Department> getAccessibleDepartments() {
+        return accessibleDepartments;
+    }
+
+    public void setAccessibleDepartments(Set<Department> accessibleDepartments) {
+        this.accessibleDepartments = accessibleDepartments;
     }
     
     public void setEnabled(Boolean enabled) {
