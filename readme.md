@@ -4,7 +4,11 @@
 
 项目不是只把文档塞给大模型：它用 Redis 做语义召回、Elasticsearch 做 BM25 关键词召回，通过 RRF 融合排名，再从 MySQL 批量取得权威原文。Agent 根据问题决定是否调用知识库工具，并返回可追溯到文档分块的引用证据。
 
-> 项目基于开源知识库系统二次开发。文档 CRUD、文件解析和基础问答来自上游；Elasticsearch BM25、统一候选模型、RRF 融合、MySQL 批量补全、引用证据、Agent 工具调用、权限演示和检索评测是本轮重点改造。
+## 二次开发说明
+
+本项目基于 [2518350LJL/ai-knowledge-base](https://github.com/2518350LJL/ai-knowledge-base) 进行二次开发，原项目采用 Apache License 2.0。
+
+在保留原有文档管理、JWT/RBAC、文件上传与基础向量问答能力的基础上，本项目新增或改造了 Elasticsearch BM25 检索、Redis + ES 双路召回、RRF 融合、MySQL 权威数据补全、引用返回、LangChain4j Agent Tool、检索评测、部门数据范围与低相关证据拦截等能力。
 
 ## 核心能力
 
