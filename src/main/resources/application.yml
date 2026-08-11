@@ -65,6 +65,9 @@ spring:
 app:
   ingestion:
     storage-dir: ${INGESTION_STORAGE_DIR:./data/ingestion}
+  retrieval:
+    # BM25 分数受当前索引语料影响；低于该值的 ES 命中不进入 RRF。
+    min-bm25-score: ${MIN_BM25_SCORE:0.3}
 
 # 日志配置
 logging:

@@ -6,6 +6,7 @@ import co.elastic.clients.elasticsearch.core.search.Hit;
 import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 import co.elastic.clients.elasticsearch.core.DeleteByQueryResponse;
 import co.elastic.clients.elasticsearch._types.FieldValue;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import com.kb.demo.dto.ElasticsearchChunkDocument;
 import com.kb.demo.dto.RetrievalCandidate;
@@ -20,6 +21,13 @@ import java.io.IOException;
 public class ElasticsearchSearchService {
     private final ElasticsearchClient elasticsearchClient;
     private static final String INDEX_NAME = "document-chunks";
+
+    /**
+     * BM25 原始分数会随语料规模和字段配置变化，因此阈值必须可配置。
+     * 低于该值的文本匹配不进入 RRF，避免弱关键词命中被当作回答证据。
+     */
+    @Value("${app.retrieval.min-bm25-score:0.3}")
+    private double minBm25Score = 0.3;
 
     public ElasticsearchSearchService(ElasticsearchClient elasticsearchClient) {
         this.elasticsearchClient = elasticsearchClient;
@@ -181,12 +189,22 @@ public class ElasticsearchSearchService {
             ElasticsearchChunkDocument chunkDocument=hit.source();
             Double rawScore=hit.score();
             if(chunkDocument==null||chunkDocument.getDocumentId()==null||chunkDocument.getChunkIndex()==null||rawScore==null)continue;
+            if (!meetsMinimumBm25Score(rawScore)) {
+                continue;
+            }
             //rank持续加一
             int rank=candidates.size()+1;
             RetrievalCandidate candidate=new RetrievalCandidate(chunkDocument.getDocumentId(),chunkDocument.getChunkIndex(), rawScore, rank, RetrievalSource.ELASTICSEARCH_BM25);
             candidates.add(candidate);
         }
         return candidates;
+    }
+
+    /**
+     * 在 ES 候选进入 RRF 前拦截低相关文本匹配。
+     */
+    boolean meetsMinimumBm25Score(double rawScore) {
+        return rawScore >= minBm25Score;
     }
 
 
