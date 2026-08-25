@@ -28,6 +28,9 @@ public class DocumentService {
     
     @Autowired
     private DocumentChunkService documentChunkService;
+
+    @Autowired
+    private AiService aiService;
     
     /**
      * 保存文档
@@ -126,6 +129,11 @@ public class DocumentService {
         }
         
         Document updatedDocument = documentRepository.save(originalDocument);
+
+        // 标题变化也可能影响回答和引用展示，即使无需重算向量也必须失效旧答案缓存。
+        if (hasChanges) {
+            aiService.invalidateAnswersByDocumentId(id);
+        }
         
         return updatedDocument;
     }
@@ -188,7 +196,10 @@ public class DocumentService {
      * 删除文档
      * @param id 文档ID
      */
+    @Transactional
     public void deleteDocument(Long id) {
+        aiService.invalidateAnswersByDocumentId(id);
+        documentChunkService.deleteChunksByDocumentId(id);
         documentRepository.deleteById(id);
     }
     

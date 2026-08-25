@@ -1,0 +1,8 @@
+[
+  {
+    "query": "公司的报销流程是什么？",
+    "relevantChunks": [
+      { "documentId": 1, "chunkIndex": 3 }
+    ]
+  }
+]

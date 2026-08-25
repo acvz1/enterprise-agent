@@ -35,7 +35,7 @@ public class KnowledgeBaseTool {
         }
 
         try{
-            return hybridRetrievalService.searchHits(query, 10, 0.5, 5);
+            return hybridRetrievalService.searchHits(query, 10, 5);
         }catch(IOException e){
             throw new IllegalStateException("知识库检索失败",e);
         }

@@ -33,6 +33,9 @@ class DocumentServiceSynchronizationTest {
     @Mock
     private DocumentChunkService documentChunkService;
 
+    @Mock
+    private AiService aiService;
+
     @InjectMocks
     private DocumentService documentService;
 

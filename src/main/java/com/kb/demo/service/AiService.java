@@ -18,6 +18,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.HashMap;
@@ -42,6 +43,8 @@ public class AiService {
     private final DepartmentAccessService departmentAccessService;
 
     private static final String NO_ACCESSIBLE_EVIDENCE = "未找到当前账号可访问的知识库内容，无法基于证据回答该问题。";
+    private static final long ANSWER_CACHE_TTL_MINUTES = 5L;
+    private static final String DOCUMENT_CACHE_KEYS_PREFIX = "ai:document-cache-keys:";
 
     public AiService(
             ModelFactory modelFactory,
@@ -73,7 +76,7 @@ public class AiService {
         // 使用混合检索获取RRF TopK分块
         List<RetrievalHit> relevantHits;
         try{
-            relevantHits=hybridRetrievalService.searchHits(question, 10, 0.5, 5);
+            relevantHits=hybridRetrievalService.searchHits(question, 10, 5);
         }catch(IOException e){
             throw new IllegalStateException("混合检索失败",e);
         }
@@ -108,8 +111,7 @@ public class AiService {
         // 调用模型生成答案
         String answer = model.generate(prompt);
         
-        // 将答案存入缓存，有效期5分钟
-        redisTemplate.opsForValue().set(cacheKey, answer, 5, TimeUnit.MINUTES);
+        cacheAnswer(cacheKey, answer, relevantHits);
         
         return Map.of("answer", answer, "fromCache", false, "model", modelName,"citations",relevantHits);
     }
@@ -126,7 +128,7 @@ public class AiService {
         logger.debug("缓存键: {}", cacheKey);
 
         // 使用混合检索获取RRF TopK分块
-        List<RetrievalHit> relevantHits =hybridRetrievalService.searchHits(question, 10, 0.5, 5);
+        List<RetrievalHit> relevantHits =hybridRetrievalService.searchHits(question, 10, 5);
 
         if (relevantHits.isEmpty()) {
             emitter.send(SseEmitter.event().name("message").data(NO_ACCESSIBLE_EVIDENCE));
@@ -226,8 +228,8 @@ public class AiService {
                         tokenBuffer.setLength(0);
                     }
                     
-                    // 将完整答案存入缓存，有效期5分钟
-                    redisTemplate.opsForValue().set(cacheKey, answer, 5, TimeUnit.MINUTES);
+                    // 将完整答案存入缓存，并登记它依赖的文档 ID，供文档更新时精准失效。
+                    cacheAnswer(cacheKey, answer, relevantHits);
                     logger.debug("答案已存入缓存");
                     
                     // 保存用户问题和AI回答到会话记忆
@@ -305,6 +307,42 @@ public class AiService {
         // 清除所有AI相关的缓存
         String pattern = "ai:answer:*";
         redisTemplate.delete(redisTemplate.keys(pattern));
+    }
+
+    /**
+     * 缓存答案，并建立 documentId 到答案缓存键的反向索引。
+     * 文档更新或删除时，可由该索引精准删除受影响答案，而非清空所有会话缓存。
+     */
+    private void cacheAnswer(String cacheKey, String answer, List<RetrievalHit> hits) {
+        redisTemplate.opsForValue().set(cacheKey, answer, ANSWER_CACHE_TTL_MINUTES, TimeUnit.MINUTES);
+
+        Set<Long> documentIds = hits.stream()
+                .map(RetrievalHit::getDocumentId)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toSet());
+        for (Long documentId : documentIds) {
+            String reverseIndexKey = documentCacheKeysKey(documentId);
+            redisTemplate.opsForSet().add(reverseIndexKey, cacheKey);
+            // 反向索引与答案缓存使用相同 TTL，过期后不会无限累积旧 key。
+            redisTemplate.expire(reverseIndexKey, ANSWER_CACHE_TTL_MINUTES, TimeUnit.MINUTES);
+        }
+    }
+
+    /**
+     * 精准失效引用指定文档的答案缓存。
+     * 由文档重建和删除流程在修改检索数据前调用。
+     */
+    public void invalidateAnswersByDocumentId(Long documentId) {
+        String reverseIndexKey = documentCacheKeysKey(documentId);
+        Set<String> answerCacheKeys = redisTemplate.opsForSet().members(reverseIndexKey);
+        if (answerCacheKeys != null && !answerCacheKeys.isEmpty()) {
+            redisTemplate.delete(answerCacheKeys);
+        }
+        redisTemplate.delete(reverseIndexKey);
+    }
+
+    private String documentCacheKeysKey(Long documentId) {
+        return DOCUMENT_CACHE_KEYS_PREFIX + documentId;
     }
     
     /**

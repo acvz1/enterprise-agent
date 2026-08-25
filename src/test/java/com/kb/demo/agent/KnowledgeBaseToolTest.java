@@ -42,7 +42,7 @@ class KnowledgeBaseToolTest {
         List<RetrievalHit> result = tool.searchKnowledgeBase("内部制度是什么");
 
         assertThat(result).isEmpty();
-        verify(hybridRetrievalService, never()).searchHits("内部制度是什么", 10, 0.5, 5);
+        verify(hybridRetrievalService, never()).searchHits("内部制度是什么", 10, 5);
     }
 
     @Test
@@ -53,13 +53,13 @@ class KnowledgeBaseToolTest {
                         null,
                         List.of(new SimpleGrantedAuthority("document:read"))));
         RetrievalHit hit = new RetrievalHit();
-        when(hybridRetrievalService.searchHits("内部制度是什么", 10, 0.5, 5))
+        when(hybridRetrievalService.searchHits("内部制度是什么", 10, 5))
                 .thenReturn(List.of(hit));
         KnowledgeBaseTool tool = new KnowledgeBaseTool(hybridRetrievalService);
 
         List<RetrievalHit> result = tool.searchKnowledgeBase("内部制度是什么");
 
         assertThat(result).containsExactly(hit);
-        verify(hybridRetrievalService).searchHits("内部制度是什么", 10, 0.5, 5);
+        verify(hybridRetrievalService).searchHits("内部制度是什么", 10, 5);
     }
 }

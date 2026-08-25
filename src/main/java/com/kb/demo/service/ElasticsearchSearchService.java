@@ -5,6 +5,7 @@ import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.search.Hit;
 import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 import co.elastic.clients.elasticsearch.core.DeleteByQueryResponse;
+import co.elastic.clients.elasticsearch.core.CountResponse;
 import co.elastic.clients.elasticsearch._types.FieldValue;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -121,6 +122,7 @@ public class ElasticsearchSearchService {
      * @throws IOException
      */
     public long deleteByDocumentId(Long documentId) throws IOException{
+        createIndexIfAbsent();
         DeleteByQueryResponse response =
         elasticsearchClient.deleteByQuery(request -> request
                 .index(INDEX_NAME)
@@ -132,6 +134,15 @@ public class ElasticsearchSearchService {
                 )
         );
         return response.deleted()==null?0L:response.deleted();
+    }
+
+    /** 查询当前 ES 索引中属于某份文档的分块数，供入库后校验。 */
+    public long countByDocumentId(Long documentId) throws IOException {
+        createIndexIfAbsent();
+        CountResponse response = elasticsearchClient.count(request -> request
+                .index(INDEX_NAME)
+                .query(query -> query.term(term -> term.field("documentId").value(documentId))));
+        return response.count();
     }
 
 
@@ -159,6 +170,22 @@ public class ElasticsearchSearchService {
 
     /** BM25 在 Elasticsearch 查询阶段按可见文档 ID 过滤，结果进入 RRF 前已完成权限收口。 */
     public List<RetrievalCandidate> searchBm25Candidates(String query, int maxResults, Set<Long> allowedDocumentIds)throws IOException{
+        return searchBm25Candidates(query, maxResults, allowedDocumentIds, minBm25Score);
+    }
+
+    /**
+     * 供离线评估采集完整 BM25 候选池。
+     *
+     * 生产检索仍使用带 minBm25Score 的同名入口；此方法只取消分数过滤，
+     * 查询、权限过滤、候选转换和排序逻辑与生产链路完全复用。
+     */
+    public List<RetrievalCandidate> searchBm25CandidatesUnfiltered(
+            String query, int maxResults, Set<Long> allowedDocumentIds) throws IOException {
+        return searchBm25Candidates(query, maxResults, allowedDocumentIds, null);
+    }
+
+    private List<RetrievalCandidate> searchBm25Candidates(
+            String query, int maxResults, Set<Long> allowedDocumentIds, Double minimumScore) throws IOException {
         createIndexIfAbsent();
         if (allowedDocumentIds != null && allowedDocumentIds.isEmpty()) {
             return List.of();
@@ -189,7 +216,7 @@ public class ElasticsearchSearchService {
             ElasticsearchChunkDocument chunkDocument=hit.source();
             Double rawScore=hit.score();
             if(chunkDocument==null||chunkDocument.getDocumentId()==null||chunkDocument.getChunkIndex()==null||rawScore==null)continue;
-            if (!meetsMinimumBm25Score(rawScore)) {
+            if (minimumScore != null && rawScore < minimumScore) {
                 continue;
             }
             //rank持续加一
