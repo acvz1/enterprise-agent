@@ -63,6 +63,12 @@ public class RedisVectorIndexService {
         return count;
     }
 
+    /** 当前文档登记的向量数量，用于写入后的最终一致性校验。 */
+    public long countByDocumentId(Long documentId) {
+        Long size = redisTemplate.opsForSet().size(registryKey(documentId));
+        return size == null ? 0L : size;
+    }
+
     /**
      * 清理全量重建前遗留的文档向量 ID 登记表。
      */

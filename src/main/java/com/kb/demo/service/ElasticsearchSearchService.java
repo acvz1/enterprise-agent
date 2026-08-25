@@ -5,6 +5,7 @@ import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.search.Hit;
 import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
 import co.elastic.clients.elasticsearch.core.DeleteByQueryResponse;
+import co.elastic.clients.elasticsearch.core.CountResponse;
 import co.elastic.clients.elasticsearch._types.FieldValue;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -121,6 +122,7 @@ public class ElasticsearchSearchService {
      * @throws IOException
      */
     public long deleteByDocumentId(Long documentId) throws IOException{
+        createIndexIfAbsent();
         DeleteByQueryResponse response =
         elasticsearchClient.deleteByQuery(request -> request
                 .index(INDEX_NAME)
@@ -132,6 +134,15 @@ public class ElasticsearchSearchService {
                 )
         );
         return response.deleted()==null?0L:response.deleted();
+    }
+
+    /** 查询当前 ES 索引中属于某份文档的分块数，供入库后校验。 */
+    public long countByDocumentId(Long documentId) throws IOException {
+        createIndexIfAbsent();
+        CountResponse response = elasticsearchClient.count(request -> request
+                .index(INDEX_NAME)
+                .query(query -> query.term(term -> term.field("documentId").value(documentId))));
+        return response.count();
     }
 
 

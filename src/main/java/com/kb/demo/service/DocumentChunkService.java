@@ -19,9 +19,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.BiConsumer;
 import org.springframework.data.redis.core.RedisTemplate;
 import java.io.IOException;
@@ -50,6 +53,9 @@ public class DocumentChunkService {
 
     @Autowired
     private AiService aiService;
+
+    @Autowired
+    private DocumentIndexSyncTaskService indexSyncTaskService;
     
     @Autowired
     private ApplicationContext applicationContext;
@@ -83,9 +89,7 @@ public class DocumentChunkService {
      * @param documentId 文档ID
      * @return 处理后的文档块数量
      */
-    @Transactional
     public int processDocument(Long documentId) {
-        // 调用带进度回调的方法，不提供回调
         return processDocumentWithProgress(documentId, null);
     }
     
@@ -95,104 +99,101 @@ public class DocumentChunkService {
      * @param progressCallback 进度回调函数，接收 (当前块索引, 总块数)
      * @return 处理后的文档块数量
      */
-    @Transactional
     public int processDocumentWithProgress(Long documentId, BiConsumer<Integer, Integer> progressCallback) {
-        logger.info("开始处理文档分块和向量化，文档ID: {}", documentId);
-        
-        // 获取文档内容 - 使用em.getReference避免Hibernate字节码增强问题
-        Document document = getDocumentService().getDocumentById(documentId);
-        if (document == null) {
-            logger.warn("文档不存在，ID: {}", documentId);
+        boolean deferredUntilCommit = enqueueAndDispatchAfterCommit(
+                documentId, com.kb.demo.entity.DocumentIndexSyncTask.Operation.REBUILD);
+        // 在 DocumentService 的业务事务中，只提交 outbox；afterCommit 再写外部索引。
+        // 单独调用“手动向量化”时没有外层事务，任务已先提交，可立即执行并返回 chunk 数。
+        return deferredUntilCommit ? 0 : getSelf().retryRebuild(documentId, progressCallback);
+    }
+
+    /** 仅供持久化任务重试；不会覆盖原来的失败次数与错误记录。 */
+    @Transactional
+    public int retryRebuild(Long documentId) {
+        return runRebuild(documentId, null);
+    }
+
+    /** afterCommit 回调需要保留上传进度时使用。 */
+    @Transactional
+    public int retryRebuild(Long documentId, BiConsumer<Integer, Integer> progressCallback) {
+        return runRebuild(documentId, progressCallback);
+    }
+
+    private int runRebuild(Long documentId, BiConsumer<Integer, Integer> progressCallback) {
+        Optional<DocumentIndexSyncTaskService.SyncAttempt> attempt = indexSyncTaskService.claim(documentId);
+        if (attempt.isEmpty()) {
+            logger.debug("索引同步任务正在执行或已完成，跳过重复重建，documentId={}", documentId);
+            return 0;
+        }
+        if (attempt.get().operation() != com.kb.demo.entity.DocumentIndexSyncTask.Operation.REBUILD) {
+            indexSyncTaskService.release(attempt.get());
             return 0;
         }
 
-        // 旧答案可能引用该文档的旧正文；在重建索引前精准失效这些答案缓存。
-        aiService.invalidateAnswersByDocumentId(documentId);
-        
-        // 缓存文档ID和内容，避免后续关联问题
-        Long docId = document.getId();
-        String docContent = document.getContent();
-        
-        // 清除该文档的旧向量与旧分块，避免更新后仍由旧内容参与召回
-        long deletedRedisVectors = redisVectorIndexService.deleteByDocumentId(documentId);
-        logger.debug("✅ [Redis] 文档旧向量删除完成，文档ID: {}, 删除 {} 条", documentId, deletedRedisVectors);
-        documentChunkRepository.deleteByDocumentId(documentId);
-        
-        // 创建文档分割器
-        DocumentSplitter splitter = DocumentSplitters.recursive(CHUNK_SIZE, OVERLAP_SIZE);
-        
-        // 使用LangChain4J的Document对象
-        dev.langchain4j.data.document.Document langchainDocument = 
-            dev.langchain4j.data.document.Document.from(document.getContent());
-        
-        // 分割文档
-        List<TextSegment> segments = splitter.split(langchainDocument);
-        logger.info("✅ [文档分块] 文档被分割为 {} 个块，文档ID: {}", segments.size(), documentId);
-        
-        // 创建嵌入模型
-        EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
-        
-        // 创建Redis向量存储，明确指定索引名称
-        EmbeddingStore<TextSegment> embeddingStore = RedisEmbeddingStore.builder()
-                .host(redisHost)
-                .port(redisPort)
-                .dimension(384) // AllMiniLmL6V2EmbeddingModel的向量维度
-                .indexName("document-embeddings") // 指定索引名称，与VectorSearchService一致
-                .metadataKeys(List.of("documentId", "chunkIndex"))
-                .build();
-        
-        // 同步elasticsearch收集
-        List<ElasticsearchChunkDocument> elasticsearchDocuments=new ArrayList<>();
-    
-
-        logger.info("✅ [向量存储] 连接Redis向量存储成功: {}:{}, 索引: document-embeddings", redisHost, redisPort);
-        
-        // 处理每个文档块
-        for (int i = 0; i < segments.size(); i++) {
-            TextSegment segment = segments.get(i);
-            
-            // 使用原生SQL插入，避免Hibernate字节码增强问题
-            documentChunkRepository.insertChunk(docId, i, segment.text());
-
-            // 添加元数据标识
-            Metadata metadata=new Metadata()
-                                .put("documentId",docId)
-                                .put("chunkIndex",i);
-            TextSegment indexedSegment=TextSegment.from(segment.text(),metadata);
-
-            // 将文档块添加到向量存储
-            String embeddingId = embeddingStore.add(embeddingModel.embed(indexedSegment.text()).content(), indexedSegment);
-            redisVectorIndexService.registerEmbedding(docId, embeddingId);
-            
-            // 添加到elasticsearch列表
-            elasticsearchDocuments.add(new ElasticsearchChunkDocument(docId,i,segment.text()));
-
-            if (i == 0) {
-                logger.debug("✅ [向量存储] 第一个块向量化成功，ID: {}", embeddingId);
-            }
-            
-            // 每处理10个块或最后一个块时，调用进度回调
-            if ((i + 1) % 10 == 0 || i == segments.size() - 1) {
-                if (progressCallback != null) {
-                    progressCallback.accept(i + 1, segments.size());
-                }
-                logger.debug("[向量化进度] 已处理 {}/{} 个块", i + 1, segments.size());
-            }
-        }
-        
+        logger.info("开始处理文档分块和向量化，文档ID: {}", documentId);
         try {
-            long deletedCount=elasticsearchSearchService.deleteByDocumentId(docId);
+            Document document = getDocumentService().getDocumentById(documentId);
+            if (document == null) {
+                // 上游 MySQL 事务回滚或文档已删除时，索引也必须收敛为“没有该文档”。
+                deleteIndexData(documentId);
+                documentChunkRepository.deleteByDocumentId(documentId);
+                validateDelete(documentId);
+                indexSyncTaskService.markSuccess(attempt.get());
+                return 0;
+            }
+
+            aiService.invalidateAnswersByDocumentId(documentId);
+            Long docId = document.getId();
+            long deletedRedisVectors = redisVectorIndexService.deleteByDocumentId(documentId);
+            logger.debug("✅ [Redis] 文档旧向量删除完成，文档ID: {}, 删除 {} 条", documentId, deletedRedisVectors);
+            documentChunkRepository.deleteByDocumentId(documentId);
+
+            DocumentSplitter splitter = DocumentSplitters.recursive(CHUNK_SIZE, OVERLAP_SIZE);
+            dev.langchain4j.data.document.Document langchainDocument =
+                    dev.langchain4j.data.document.Document.from(document.getContent());
+            List<TextSegment> segments = splitter.split(langchainDocument);
+            logger.info("✅ [文档分块] 文档被分割为 {} 个块，文档ID: {}", segments.size(), documentId);
+
+            EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
+            EmbeddingStore<TextSegment> embeddingStore = RedisEmbeddingStore.builder()
+                    .host(redisHost)
+                    .port(redisPort)
+                    .dimension(384)
+                    .indexName("document-embeddings")
+                    .metadataKeys(List.of("documentId", "chunkIndex"))
+                    .build();
+            List<ElasticsearchChunkDocument> elasticsearchDocuments = new ArrayList<>();
+
+            for (int i = 0; i < segments.size(); i++) {
+                TextSegment segment = segments.get(i);
+                documentChunkRepository.insertChunk(docId, i, segment.text());
+                Metadata metadata = new Metadata().put("documentId", docId).put("chunkIndex", i);
+                TextSegment indexedSegment = TextSegment.from(segment.text(), metadata);
+                String embeddingId = embeddingStore.add(embeddingModel.embed(indexedSegment.text()).content(), indexedSegment);
+                redisVectorIndexService.registerEmbedding(docId, embeddingId);
+                elasticsearchDocuments.add(new ElasticsearchChunkDocument(docId, i, segment.text()));
+
+                if ((i + 1) % 10 == 0 || i == segments.size() - 1) {
+                    if (progressCallback != null) {
+                        progressCallback.accept(i + 1, segments.size());
+                    }
+                    logger.debug("[向量化进度] 已处理 {}/{} 个块", i + 1, segments.size());
+                }
+            }
+
+            elasticsearchSearchService.deleteByDocumentId(docId);
             elasticsearchSearchService.indexChunks(elasticsearchDocuments);
             elasticsearchSearchService.refreshIndex();
-        } catch (IOException exception) {
-            throw new IllegalStateException(
-                    "Elasticsearch 文档分块同步失败，documentId=" + docId,
-                    exception
-    );
-}
-
-        logger.info("✅ [文档分块] 文档分块和向量化处理完成，文档ID: {}, 共处理 {} 个块", documentId, segments.size());
-        return segments.size();
+            validateRebuild(docId, segments.size());
+            indexSyncTaskService.markSuccess(attempt.get());
+            logger.info("✅ [文档分块] 索引同步完成且校验通过，documentId: {}, 共处理 {} 个块", documentId, segments.size());
+            return segments.size();
+        } catch (Exception exception) {
+            indexSyncTaskService.markFailure(attempt.get(), exception);
+            throw exception instanceof RuntimeException runtimeException
+                    ? runtimeException
+                    : new IllegalStateException("文档索引同步失败，documentId=" + documentId, exception);
+        }
     }
     
     /**
@@ -244,31 +245,114 @@ public class DocumentChunkService {
      * 删除文档的所有分块及其向量数据
      * @param documentId 文档ID
      */
-    @Transactional
     public void deleteChunksByDocumentId(Long documentId) {
+        boolean deferredUntilCommit = enqueueAndDispatchAfterCommit(
+                documentId, com.kb.demo.entity.DocumentIndexSyncTask.Operation.DELETE);
+        if (!deferredUntilCommit) {
+            getSelf().retryDelete(documentId);
+        }
+    }
+
+    /** 仅供持久化任务重试；不会把旧失败记录覆盖成一个新任务。 */
+    @Transactional
+    public void retryDelete(Long documentId) {
+        runDelete(documentId);
+    }
+
+    /**
+     * 业务事务内只写 MySQL outbox；提交后才访问 Redis 和 ES。
+     * 若 afterCommit 的即时执行失败，任务仍为 PENDING / RETRYING，交给定时扫描恢复。
+     */
+    private boolean enqueueAndDispatchAfterCommit(
+            Long documentId, com.kb.demo.entity.DocumentIndexSyncTask.Operation operation) {
+        boolean transactionActive = TransactionSynchronizationManager.isSynchronizationActive();
+        indexSyncTaskService.request(documentId, operation);
+        if (!transactionActive) {
+            return false;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    if (operation == com.kb.demo.entity.DocumentIndexSyncTask.Operation.DELETE) {
+                        getSelf().retryDelete(documentId);
+                    } else {
+                        getSelf().retryRebuild(documentId);
+                    }
+                } catch (Exception exception) {
+                    logger.warn("事务提交后的索引同步失败，将由定时任务重试，documentId={}, operation={}",
+                            documentId, operation, exception);
+                }
+            }
+        });
+        return true;
+    }
+
+    /** 通过 Spring 代理调用，确保 retryRebuild / retryDelete 的事务注解生效。 */
+    private DocumentChunkService getSelf() {
+        return applicationContext.getBean(DocumentChunkService.class);
+    }
+
+    private void runDelete(Long documentId) {
+        Optional<DocumentIndexSyncTaskService.SyncAttempt> attempt = indexSyncTaskService.claim(documentId);
+        if (attempt.isEmpty()) {
+            logger.debug("索引删除任务正在执行或已完成，跳过重复删除，documentId={}", documentId);
+            return;
+        }
+        if (attempt.get().operation() != com.kb.demo.entity.DocumentIndexSyncTask.Operation.DELETE) {
+            indexSyncTaskService.release(attempt.get());
+            return;
+        }
+
         logger.info("删除文档的所有分块，文档ID: {}", documentId);
-
-        // 删除文档前，不允许继续返回引用它的历史答案。
-        aiService.invalidateAnswersByDocumentId(documentId);
-        
-        // 1. 从Redis删除该文档登记过的向量数据
-        long deletedRedisVectors = redisVectorIndexService.deleteByDocumentId(documentId);
-        logger.debug("✅ [Redis] 文档向量删除完成，文档ID: {}, 删除 {} 条", documentId, deletedRedisVectors);
-
-        // 2. 从MySQL删除分块数据
-        int deletedChunks = documentChunkRepository.findByDocumentIdOrderByChunkIndexAsc(documentId).size();
-        documentChunkRepository.deleteByDocumentId(documentId);
-        logger.debug("✅ [MySQL] 文档分块删除完成，文档ID: {}, 删除 {} 个分块", documentId, deletedChunks);
-
-        // 3. 从Elasticsearch删除分块
         try {
-            long deletedCount = elasticsearchSearchService.deleteByDocumentId(documentId);
-            logger.debug("✅ [Elasticsearch] 文档分块删除完成，文档ID: {}, 删除 {} 个分块",
-                    documentId, deletedCount);
-        } catch (IOException exception) {
-            throw new IllegalStateException(
-                    "Elasticsearch 文档分块删除失败，documentId=" + documentId,
-                    exception);
+            aiService.invalidateAnswersByDocumentId(documentId);
+            deleteIndexData(documentId);
+            documentChunkRepository.deleteByDocumentId(documentId);
+            validateDelete(documentId);
+            indexSyncTaskService.markSuccess(attempt.get());
+            logger.info("✅ [文档删除] 索引删除完成且校验通过，documentId={}", documentId);
+        } catch (Exception exception) {
+            indexSyncTaskService.markFailure(attempt.get(), exception);
+            throw exception instanceof RuntimeException runtimeException
+                    ? runtimeException
+                    : new IllegalStateException("文档索引删除失败，documentId=" + documentId, exception);
+        }
+    }
+
+    /** Redis 和 ES 均按 documentId 删除；重复执行不会扩大副作用。 */
+    private void deleteIndexData(Long documentId) throws IOException {
+        long deletedRedisVectors = redisVectorIndexService.deleteByDocumentId(documentId);
+        logger.debug("✅ [Redis] 文档向量删除完成，documentId: {}, 删除 {} 条", documentId, deletedRedisVectors);
+        long deletedEsChunks = elasticsearchSearchService.deleteByDocumentId(documentId);
+        elasticsearchSearchService.refreshIndex();
+        logger.debug("✅ [Elasticsearch] 文档分块删除完成，documentId: {}, 删除 {} 条", documentId, deletedEsChunks);
+    }
+
+    /** 只有三处数量一致时才把任务标记为成功。 */
+    private void validateRebuild(Long documentId, int expectedCount) throws IOException {
+        long mysqlCount = documentChunkRepository.countByDocumentId(documentId);
+        long redisCount = redisVectorIndexService.countByDocumentId(documentId);
+        long esCount = elasticsearchSearchService.countByDocumentId(documentId);
+        if (mysqlCount != expectedCount || redisCount != expectedCount || esCount != expectedCount) {
+            throw new IllegalStateException("索引分块数量不一致，documentId=" + documentId
+                    + ", expected=" + expectedCount
+                    + ", mysql=" + mysqlCount
+                    + ", redis=" + redisCount
+                    + ", elasticsearch=" + esCount);
+        }
+    }
+
+    private void validateDelete(Long documentId) throws IOException {
+        long mysqlCount = documentChunkRepository.countByDocumentId(documentId);
+        long redisCount = redisVectorIndexService.countByDocumentId(documentId);
+        long esCount = elasticsearchSearchService.countByDocumentId(documentId);
+        if (mysqlCount != 0 || redisCount != 0 || esCount != 0) {
+            throw new IllegalStateException("索引删除数量校验失败，documentId=" + documentId
+                    + ", mysql=" + mysqlCount
+                    + ", redis=" + redisCount
+                    + ", elasticsearch=" + esCount);
         }
     }
     

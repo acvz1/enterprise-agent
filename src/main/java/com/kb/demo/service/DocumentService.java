@@ -196,8 +196,10 @@ public class DocumentService {
      * 删除文档
      * @param id 文档ID
      */
+    @Transactional
     public void deleteDocument(Long id) {
         aiService.invalidateAnswersByDocumentId(id);
+        documentChunkService.deleteChunksByDocumentId(id);
         documentRepository.deleteById(id);
     }
     
