@@ -76,7 +76,7 @@ public class AiService {
         // 使用混合检索获取RRF TopK分块
         List<RetrievalHit> relevantHits;
         try{
-            relevantHits=hybridRetrievalService.searchHits(question, 10, 0.5, 5);
+            relevantHits=hybridRetrievalService.searchHits(question, 10, 5);
         }catch(IOException e){
             throw new IllegalStateException("混合检索失败",e);
         }
@@ -128,7 +128,7 @@ public class AiService {
         logger.debug("缓存键: {}", cacheKey);
 
         // 使用混合检索获取RRF TopK分块
-        List<RetrievalHit> relevantHits =hybridRetrievalService.searchHits(question, 10, 0.5, 5);
+        List<RetrievalHit> relevantHits =hybridRetrievalService.searchHits(question, 10, 5);
 
         if (relevantHits.isEmpty()) {
             emitter.send(SseEmitter.event().name("message").data(NO_ACCESSIBLE_EVIDENCE));

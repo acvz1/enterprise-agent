@@ -19,7 +19,7 @@ class AiServiceEvidenceGuardTest {
         ModelFactory modelFactory = mock(ModelFactory.class);
         HybridRetrievalService hybridRetrievalService = mock(HybridRetrievalService.class);
         DepartmentAccessService departmentAccessService = mock(DepartmentAccessService.class);
-        when(hybridRetrievalService.searchHits("报销流程", 10, 0.5, 5)).thenReturn(List.of());
+        when(hybridRetrievalService.searchHits("报销流程", 10, 5)).thenReturn(List.of());
         when(departmentAccessService.currentScopeCacheKey()).thenReturn("dept-10");
 
         AiService service = new AiService(

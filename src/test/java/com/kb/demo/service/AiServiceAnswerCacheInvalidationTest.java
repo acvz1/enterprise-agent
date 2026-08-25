@@ -51,7 +51,7 @@ class AiServiceAnswerCacheInvalidationTest {
         RetrievalHit firstHit = hit(7L, 71L);
         RetrievalHit secondHitFromSameDocument = hit(7L, 72L);
         RetrievalHit thirdHit = hit(8L, 81L);
-        when(hybridRetrievalService.searchHits("报销流程", 10, 0.5, 5))
+        when(hybridRetrievalService.searchHits("报销流程", 10, 5))
                 .thenReturn(List.of(firstHit, secondHitFromSameDocument, thirdHit));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(departmentAccessService.currentScopeCacheKey()).thenReturn("dept-10");

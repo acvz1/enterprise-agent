@@ -1,5 +1,6 @@
 package com.kb.demo.service;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.kb.demo.dto.FusedRetrievalCandidate;
@@ -17,6 +18,10 @@ public class HybridRetrievalService {
     private final RrfFusionService rrfFusionService;
     private final RetrievalResultService retrievalResultService;
     private final DepartmentAccessService departmentAccessService;
+
+    /** Redis 相似度阈值由离线评测得到，并可通过 MIN_VECTOR_SCORE 覆盖。 */
+    @Value("${app.retrieval.min-vector-score:0.72}")
+    private double minVectorScore = 0.72;
 
     public HybridRetrievalService(VectorSearchService vectorSearchService,
             ElasticsearchSearchService elasticsearchSearchService, RrfFusionService rrfFusionService,
@@ -47,6 +52,11 @@ public class HybridRetrievalService {
         return rrfFusionService.fuse(redisCandidates, elasticsearchCandidates, topK);
     }
 
+    /** 使用当前环境配置的 Redis 向量阈值执行混合候选召回。 */
+    public List<FusedRetrievalCandidate> search(String query, int candidateLimit, int topK) throws IOException {
+        return search(query, candidateLimit, minVectorScore, topK);
+    }
+
     /**
      * 执行混合检索，并从 MySQL 批量补全候选对应的权威文档数据。
      *
@@ -65,6 +75,11 @@ public class HybridRetrievalService {
         List<FusedRetrievalCandidate> candidates = rrfFusionService.fuse(redisCandidates, elasticsearchCandidates, topK);
         List<RetrievalHit>hits=retrievalResultService.assembleHits(candidates, scope);
         return hits;
+    }
+
+    /** 使用当前环境配置的 Redis 向量阈值执行混合检索并补全证据。 */
+    public List<RetrievalHit> searchHits(String query, int candidateLimit, int topK) throws IOException {
+        return searchHits(query, candidateLimit, minVectorScore, topK);
     }
 
 }

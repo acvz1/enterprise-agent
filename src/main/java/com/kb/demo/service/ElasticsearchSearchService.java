@@ -170,6 +170,22 @@ public class ElasticsearchSearchService {
 
     /** BM25 在 Elasticsearch 查询阶段按可见文档 ID 过滤，结果进入 RRF 前已完成权限收口。 */
     public List<RetrievalCandidate> searchBm25Candidates(String query, int maxResults, Set<Long> allowedDocumentIds)throws IOException{
+        return searchBm25Candidates(query, maxResults, allowedDocumentIds, minBm25Score);
+    }
+
+    /**
+     * 供离线评估采集完整 BM25 候选池。
+     *
+     * 生产检索仍使用带 minBm25Score 的同名入口；此方法只取消分数过滤，
+     * 查询、权限过滤、候选转换和排序逻辑与生产链路完全复用。
+     */
+    public List<RetrievalCandidate> searchBm25CandidatesUnfiltered(
+            String query, int maxResults, Set<Long> allowedDocumentIds) throws IOException {
+        return searchBm25Candidates(query, maxResults, allowedDocumentIds, null);
+    }
+
+    private List<RetrievalCandidate> searchBm25Candidates(
+            String query, int maxResults, Set<Long> allowedDocumentIds, Double minimumScore) throws IOException {
         createIndexIfAbsent();
         if (allowedDocumentIds != null && allowedDocumentIds.isEmpty()) {
             return List.of();
@@ -200,7 +216,7 @@ public class ElasticsearchSearchService {
             ElasticsearchChunkDocument chunkDocument=hit.source();
             Double rawScore=hit.score();
             if(chunkDocument==null||chunkDocument.getDocumentId()==null||chunkDocument.getChunkIndex()==null||rawScore==null)continue;
-            if (!meetsMinimumBm25Score(rawScore)) {
+            if (minimumScore != null && rawScore < minimumScore) {
                 continue;
             }
             //rank持续加一
