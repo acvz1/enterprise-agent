@@ -47,6 +47,9 @@ public class DocumentChunkService {
 
     @Autowired
     private RedisVectorIndexService redisVectorIndexService;
+
+    @Autowired
+    private AiService aiService;
     
     @Autowired
     private ApplicationContext applicationContext;
@@ -102,6 +105,9 @@ public class DocumentChunkService {
             logger.warn("文档不存在，ID: {}", documentId);
             return 0;
         }
+
+        // 旧答案可能引用该文档的旧正文；在重建索引前精准失效这些答案缓存。
+        aiService.invalidateAnswersByDocumentId(documentId);
         
         // 缓存文档ID和内容，避免后续关联问题
         Long docId = document.getId();
@@ -241,6 +247,9 @@ public class DocumentChunkService {
     @Transactional
     public void deleteChunksByDocumentId(Long documentId) {
         logger.info("删除文档的所有分块，文档ID: {}", documentId);
+
+        // 删除文档前，不允许继续返回引用它的历史答案。
+        aiService.invalidateAnswersByDocumentId(documentId);
         
         // 1. 从Redis删除该文档登记过的向量数据
         long deletedRedisVectors = redisVectorIndexService.deleteByDocumentId(documentId);
