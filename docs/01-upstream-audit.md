@@ -56,7 +56,7 @@ Redis 命中正文后按文本反查 MySQL。重复正文可能关联错误，�
 | 候选阶段逐条查询 MySQL | RRF 选定 Top K 后一次 `JOIN FETCH` 补全，实测 SQL 次数为 1 |
 | 模型使用整篇文档 | 使用 `RetrievalHit.content` 精确 chunk 构建 Prompt，并返回 citations |
 | 固定 RAG | LangChain4j `AiServices` 注册 `searchKnowledgeBase`，模型按问题决定是否调用 |
-| 证据可能越权进入模型 | Controller 检查 `qa:ask`，工具返回结果前检查 `document:read` |
+| 证据可能越权进入模型 | Controller 检查 `qa:ask`，工具执行检索前检查 `document:read` |
 | 只有成功样例 | 15 问固定评测 + DOCX/PDF/TXT 真实上传 + 缺失知识拒答 |
 
 ## 5. 清理过的上游噪声

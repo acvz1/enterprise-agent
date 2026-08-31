@@ -1,5 +1,6 @@
 package com.kb.demo.service;
 
+import com.kb.demo.config.EmbeddingModelConfig;
 import com.kb.demo.dto.RetrievalCandidate;
 import com.kb.demo.dto.RetrievalHit;
 import com.kb.demo.entity.Document;
@@ -11,7 +12,6 @@ import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
 import dev.langchain4j.store.embedding.EmbeddingSearchResult;
@@ -54,7 +54,10 @@ public class VectorSearchService {
     
     @Autowired
     private MetricsService metricsService;
-    
+
+    @Autowired
+    private EmbeddingModel embeddingModel;
+
     @Value("${spring.data.redis.host:localhost}")
     private String redisHost;
     
@@ -72,9 +75,9 @@ public class VectorSearchService {
     private static final double MIN_SIMILARITY_THRESHOLD = 0.5;  // 从 0.7 降低到 0.5
     
     /**
-     * AllMiniLmL6V2EmbeddingModel 的向量维度
+     * Embedding 向量维度，来自 {@link EmbeddingModelConfig}。
      */
-    private static final int EMBEDDING_DIMENSION = 384;
+    private static final int EMBEDDING_DIMENSION = EmbeddingModelConfig.EMBEDDING_DIMENSION;
 
     /** Reciprocal Rank Fusion 的平滑常量，避免头部名次分数差距过大。 */
     private static final int RRF_K = 60;
@@ -96,10 +99,6 @@ public class VectorSearchService {
         var timer = metricsService.startVectorSearchTimer();
         
         try {
-            // 创建嵌入模型
-            EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
-            logger.debug("嵌入模型创建成功");
-            
             // 创廪Redis向量存储，使用配置文件中的Redis地址
             logger.info("正在连接Redis Stack向量存储: {}:{}", redisHost, redisPort);
             EmbeddingStore<TextSegment> embeddingStore = RedisEmbeddingStore.builder()
@@ -190,10 +189,6 @@ public class VectorSearchService {
     public List<RetrievalCandidate> searchVectorCandidates(String query, int maxResults, double minScore,
             Set<Long> allowedDocumentIds){
         try {
-            // 创建嵌入模型
-            EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
-            logger.debug("嵌入模型创建成功");
-            
             // 创建Redis向量存储，使用配置文件中的Redis地址
             logger.info("正在连接Redis Stack向量存储: {}:{}", redisHost, redisPort);
             EmbeddingStore<TextSegment> embeddingStore = RedisEmbeddingStore.builder()
@@ -410,9 +405,6 @@ public class VectorSearchService {
             logger.warn("文档未分块处理，文档ID: {}", documentId);
             return new ArrayList<>();
         }
-        
-        // 创建嵌入模型
-        EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
         
         // 将查询文本转换为向量
         Embedding queryEmbedding = embeddingModel.embed(query).content();

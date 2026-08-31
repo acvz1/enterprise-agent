@@ -9,8 +9,9 @@ import com.kb.demo.dto.FusedRetrievalCandidate;
 import com.kb.demo.dto.RetrievalSource;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.segment.TextSegment;
+import com.kb.demo.config.EmbeddingModelConfig;
 import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
+import dev.langchain4j.model.embedding.onnx.bgesmallzhv15.BgeSmallZhV15EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.redis.RedisEmbeddingStore;
 import org.apache.http.HttpHost;
@@ -64,7 +65,7 @@ class HybridRetrievalServiceIT {
         redisEmbeddingStore = RedisEmbeddingStore.builder()
                 .host("localhost")
                 .port(6379)
-                .dimension(384)
+                .dimension(EmbeddingModelConfig.EMBEDDING_DIMENSION)
                 .indexName("document-embeddings")
                 .metadataKeys(List.of("documentId", "chunkIndex"))
                 .build();
@@ -73,7 +74,7 @@ class HybridRetrievalServiceIT {
                 .put("documentId", TEST_DOCUMENT_ID)
                 .put("chunkIndex", TEST_CHUNK_INDEX);
         TextSegment segment = TextSegment.from(PROBE_TEXT, metadata);
-        EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
+        EmbeddingModel embeddingModel = new BgeSmallZhV15EmbeddingModel();
         redisEmbeddingStore.add(
                 embeddingModel.embed(segment.text()).content(),
                 segment);

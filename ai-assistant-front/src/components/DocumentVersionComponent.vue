@@ -93,12 +93,6 @@
             :rows="3"
           />
         </n-form-item>
-        <n-form-item label="创建者" path="createdBy">
-          <n-input
-            v-model:value="versionForm.createdBy"
-            placeholder="请输入创建者名称"
-          />
-        </n-form-item>
       </n-form>
       <template #footer>
         <n-space justify="end">
@@ -224,19 +218,13 @@ const compareResult = ref('');
 
 const formRef = ref();
 const versionForm = reactive({
-  changeSummary: '',
-  createdBy: ''
+  changeSummary: ''
 });
 
 const rules = {
   changeSummary: {
     required: true,
     message: '请输入变更摘要',
-    trigger: 'blur'
-  },
-  createdBy: {
-    required: true,
-    message: '请输入创建者名称',
     trigger: 'blur'
   }
 };
@@ -274,10 +262,7 @@ const createVersion = async () => {
     await formRef.value.validate();
     saving.value = true;
     
-    await documentApi.createDocumentVersion(props.documentId, {
-      changeSummary: versionForm.changeSummary,
-      createdBy: versionForm.createdBy
-    });
+    await documentApi.createDocumentVersion(props.documentId, versionForm.changeSummary);
     
     message.success('版本创建成功');
     showCreateVersionModal.value = false;
@@ -302,9 +287,7 @@ const revertToVersion = async (version: DocumentVersion) => {
   if (!props.documentId) return;
   
   try {
-    await documentApi.revertToVersion(props.documentId, version.versionNumber, {
-      createdBy: '当前用户'
-    });
+    await documentApi.revertToVersion(props.documentId, version.versionNumber);
     
     message.success(`已成功恢复到版本 ${version.versionNumber}`);
     await fetchVersions();
@@ -342,7 +325,6 @@ const formatDateTime = (dateTime: string) => {
 // 重置表单
 const resetForm = () => {
   versionForm.changeSummary = '';
-  versionForm.createdBy = '';
   if (formRef.value) {
     formRef.value.restoreValidation();
   }

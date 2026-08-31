@@ -30,7 +30,7 @@ services:
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6379}:6379"
-      - "${REDIS_INSIGHT_PORT:-8888}:8001"
+      - "${REDIS_INSIGHT_PORT:-8001}:8001"
     volumes:
       - redis-data:/data
     environment:
@@ -54,7 +54,7 @@ services:
       ES_JAVA_OPTS: -Xms512m -Xmx512m
       TZ: Asia/Shanghai
     ports:
-      - "${ELASTICSEARCH_PORT:-9200}:9200"
+      - "${ELASTICSEARCH_BIND_ADDRESS:-127.0.0.1}:${ELASTICSEARCH_PORT:-9200}:9200"
     volumes:
       - elasticsearch-data:/usr/share/elasticsearch/data
     healthcheck:

@@ -10,7 +10,7 @@
 
 ## 2. 45 秒项目介绍
 
-> 我做的是一个 Java 企业知识库 Agent 二次开发项目。上游已经有文档 CRUD、文件解析、Redis 向量搜索和基础问答，但 Elasticsearch 只出现在配置里，没有真正进入检索链路，而且最终回答缺少稳定的 chunk 引用。我把 Redis 向量召回和 Elasticsearch BM25 都统一成 RetrievalCandidate，用 RRF 按排名融合，确定 Top K 后再通过一条 MySQL JOIN 查询补全权威原文，组装成 RetrievalHit。然后把这条混合检索封装成 LangChain4j 工具，让 Agent 自己判断是否需要查知识库，并在接口入口和工具结果返回前分别检查 qa:ask 和 document:read。最后用 15 个标注问题对比三种检索策略，并用 DOCX、PDF、TXT 真实上传验证回答与引用。
+> 我做的是一个 Java 企业知识库 Agent 二次开发项目。上游已经有文档 CRUD、文件解析、Redis 向量搜索和基础问答，但 Elasticsearch 只出现在配置里，没有真正进入检索链路，而且最终回答缺少稳定的 chunk 引用。我把 Redis 向量召回和 Elasticsearch BM25 都统一成 RetrievalCandidate，用 RRF 按排名融合，确定 Top K 后再通过一条 MySQL JOIN 查询补全权威原文，组装成 RetrievalHit。然后把这条混合检索封装成 LangChain4j 工具，让 Agent 自己判断是否需要查知识库，并在接口入口和工具执行检索前分别检查 qa:ask 和 document:read。最后用 15 个标注问题对比三种检索策略，并用 DOCX、PDF、TXT 真实上传验证回答与引用。
 
 ## 3. 两分钟讲解主线
 
@@ -40,13 +40,13 @@ Elasticsearch BM25 -> RetrievalCandidate
 - 不直接相加余弦相似度和 BM25 `_score`，因为量纲不同。
 - 候选阶段不查 MySQL，只在 Top K 确定后批量补全，避免 N+1。
 - MySQL 是 Source of Truth；Redis 和 Elasticsearch 都是可重建索引。
-- 权限做了“进入 Agent 前”和“工具结果返回模型前”两道最小检查，但不夸大为完整文档 ACL。
+- 权限做了“进入 Agent 前”和“工具执行检索前”两道最小检查，但不夸大为完整文档 ACL。
 
 ### 结果
 
-- Redis Hit@3：0.8000；Recall@3：0.7667。
-- BM25 Hit@3 / Recall@3：1.0000 / 1.0000。
-- RRF Hit@3 / Recall@3：0.9333 / 0.9333。
+- 本机 Docker 集成测试中，Redis Hit@3 / Recall@3：0.8000 / 0.7667。
+- 同一 15 问固定语料中，BM25 Hit@3 / Recall@3：0.9333 / 0.9333。
+- RRF Hit@3 / Recall@3：0.9333 / 0.9333；平均延迟 50.360 ms，P95 72.425 ms（小语料本机环境参考，不是生产压测）。
 - MySQL Top K 补全实测只执行 1 条 SQL。
 - 新上传 DOCX、PDF、TXT 的问答、双路来源和知识缺失拒答均验证成功。
 
@@ -57,8 +57,8 @@ Elasticsearch BM25 -> RetrievalCandidate
 - 基于开源 Spring Boot 知识库系统进行二次开发，围绕企业制度与业务文档构建“混合检索—权威数据补全—Agent 工具调用—引用返回”的完整问答链路。
 - 将 Redis 向量召回与 Elasticsearch BM25 统一为 `RetrievalCandidate`，基于 `documentId + chunkIndex` 去重并使用 RRF 融合异构排名，解决两路分数不可直接比较的问题。
 - 在 RRF Top K 后通过单条 MySQL `JOIN FETCH` 批量补全文档标题与最新 chunk 原文，组装 `RetrievalHit`，实测补全阶段 SQL 查询次数为 1，并支持普通/SSE 问答返回引用证据。
-- 基于 LangChain4j `AiServices` 封装 `searchKnowledgeBase` 工具，实现 Agent 按问题自主决定是否检索，并以 `qa:ask`、`document:read` 完成调用前后最小权限校验。
-- 构建 15 问固定评测集：Redis、BM25、RRF 的 Hit@3 分别为 0.80、1.00、0.93；完成 DOCX/PDF/TXT 实际上传与双路引用 Demo，并定位批量异步入库的 MySQL 死锁边界。
+- 基于 LangChain4j `AiServices` 封装 `searchKnowledgeBase` 工具，实现 Agent 按问题自主决定是否检索，并以 `qa:ask`、`document:read` 完成入口和检索前最小权限校验。
+- 构建 15 问固定评测集：本机集成测试中 Redis、BM25、RRF 的 Hit@3 分别为 0.80、0.93、0.93；完成 DOCX/PDF/TXT 实际上传与双路引用 Demo，并定位批量异步入库的 MySQL 死锁边界。
 
 如果简历空间只够四行，删除最后一行中的“并定位……”后半句，保留指标。
 
@@ -89,6 +89,15 @@ Set-Location ai-assistant-front
 npm.cmd run dev -- --host 127.0.0.1
 ```
 
+如果 Windows 无法发布本机 `9200` 端口，可在同一 PowerShell 会话中改用其他端口；本机验收使用的是 `19200`：
+
+```powershell
+$env:ELASTICSEARCH_PORT = '19200'
+docker compose -f docker/docker-compose.yml up -d --force-recreate elasticsearch
+$env:ELASTICSEARCH_URIS = 'http://127.0.0.1:19200'
+.\mvnw.cmd spring-boot:run
+```
+
 访问 `http://localhost:5173`，使用 `admin / admin123` 登录。
 
 ### 演示顺序
@@ -117,7 +126,7 @@ npm.cmd run dev -- --host 127.0.0.1
 
 1. `AgentController.ask()`：接收 `question/model`，`@PreAuthorize` 检查 `qa:ask`。
 2. `KnowledgeAgentService.ask()`：按 model 创建 `ChatLanguageModel`，用 `AiServices` 注册工具并执行 Agent。
-3. `KnowledgeBaseTool.searchKnowledgeBase()`：调用混合检索，并在结果交给模型前检查 `document:read`。
+3. `KnowledgeBaseTool.searchKnowledgeBase()`：先检查 `document:read`，通过后才调用混合检索。
 4. `HybridRetrievalService.searchHits()`：Redis、ES、RRF、MySQL 补全的总编排。
 5. `RrfFusionService.fuse()`：复合键去重、`1/(60+rank)` 累加、Top K。
 6. `RetrievalResultService.assembleHits()`：一条 JOIN 查询、Map 精确过滤、保持 RRF 顺序。
@@ -154,7 +163,7 @@ SQL 用 `documentId IN (...) AND chunkIndex IN (...)` 会产生两个集合的�
 
 ### Q7：权限为什么检查两次？
 
-`qa:ask` 在 Controller 前拦截没有提问权限的用户，避免不必要的模型调用；`document:read` 在工具结果返回模型前检查，避免有提问权限但无文档读取权限的用户看到检索原文。当前是全局权限，不是文档级 ACL。
+`qa:ask` 在 Controller 前拦截没有提问权限的用户，避免不必要的模型调用；`document:read` 在工具真正调用混合检索前检查，避免有提问权限但无文档读取权限的用户触发 Redis、Elasticsearch、MySQL 查询。普通 RAG 入口也要求两项权限。当前是全局权限，不是文档级 ACL。
 
 ### Q8：为什么评测中 BM25 反而比 RRF 好？
 

@@ -309,13 +309,13 @@ export const documentApi = {
   },
   
   // 创建文档新版本
-  createDocumentVersion: (documentId: number, data: { changeSummary: string; createdBy: string }) => {
-    return api.post(`/documents/${documentId}/versions`, null, { params: data });
+  createDocumentVersion: (documentId: number, changeSummary: string) => {
+    return api.post(`/documents/${documentId}/versions`, null, { params: { changeSummary } });
   },
   
   // 恢复到指定版本
-  revertToVersion: (documentId: number, versionNumber: number, data: { createdBy: string }) => {
-    return api.post(`/documents/${documentId}/versions/${versionNumber}/revert`, null, { params: data });
+  revertToVersion: (documentId: number, versionNumber: number) => {
+    return api.post(`/documents/${documentId}/versions/${versionNumber}/revert`);
   },
   
   // 比较两个版本

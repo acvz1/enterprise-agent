@@ -6,9 +6,9 @@ import com.kb.demo.entity.DocumentChunk;
 import com.kb.demo.repository.DocumentChunkRepository;
 import dev.langchain4j.data.document.DocumentSplitter;
 import dev.langchain4j.data.document.splitter.DocumentSplitters;
+import com.kb.demo.config.EmbeddingModelConfig;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.redis.RedisEmbeddingStore;
 import dev.langchain4j.data.document.Metadata;
@@ -56,7 +56,10 @@ public class DocumentChunkService {
 
     @Autowired
     private DocumentIndexSyncTaskService indexSyncTaskService;
-    
+
+    @Autowired
+    private EmbeddingModel embeddingModel;
+
     @Autowired
     private ApplicationContext applicationContext;
     
@@ -154,11 +157,10 @@ public class DocumentChunkService {
             List<TextSegment> segments = splitter.split(langchainDocument);
             logger.info("✅ [文档分块] 文档被分割为 {} 个块，文档ID: {}", segments.size(), documentId);
 
-            EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
             EmbeddingStore<TextSegment> embeddingStore = RedisEmbeddingStore.builder()
                     .host(redisHost)
                     .port(redisPort)
-                    .dimension(384)
+                    .dimension(EmbeddingModelConfig.EMBEDDING_DIMENSION)
                     .indexName("document-embeddings")
                     .metadataKeys(List.of("documentId", "chunkIndex"))
                     .build();

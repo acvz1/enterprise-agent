@@ -8,6 +8,7 @@ import co.elastic.clients.elasticsearch.core.DeleteByQueryResponse;
 import co.elastic.clients.elasticsearch.core.CountResponse;
 import co.elastic.clients.elasticsearch._types.FieldValue;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import com.kb.demo.dto.ElasticsearchChunkDocument;
 import com.kb.demo.dto.RetrievalCandidate;
@@ -21,7 +22,8 @@ import java.io.IOException;
 @Service
 public class ElasticsearchSearchService {
     private final ElasticsearchClient elasticsearchClient;
-    private static final String INDEX_NAME = "document-chunks";
+    private static final String DEFAULT_INDEX_NAME = "document-chunks";
+    private final String indexName;
 
     /**
      * BM25 原始分数会随语料规模和字段配置变化，因此阈值必须可配置。
@@ -30,8 +32,18 @@ public class ElasticsearchSearchService {
     @Value("${app.retrieval.min-bm25-score:0.3}")
     private double minBm25Score = 0.3;
 
+    @Autowired
     public ElasticsearchSearchService(ElasticsearchClient elasticsearchClient) {
+        this(elasticsearchClient, DEFAULT_INDEX_NAME);
+    }
+
+    /**
+     * Allows offline evaluation to use an isolated Elasticsearch index without
+     * changing the production default index.
+     */
+    public ElasticsearchSearchService(ElasticsearchClient elasticsearchClient, String indexName) {
         this.elasticsearchClient = elasticsearchClient;
+        this.indexName = indexName;
     }
 
     /**
@@ -40,12 +52,12 @@ public class ElasticsearchSearchService {
      */
     public void createIndexIfAbsent()throws IOException{
         boolean exists=elasticsearchClient.indices()
-                        .exists(e->e.index(INDEX_NAME))
+                        .exists(e->e.index(indexName))
                         .value();
         if(exists)return;
         elasticsearchClient.indices().create(c->c
                                             //索引库
-                                            .index(INDEX_NAME)
+                                            .index(indexName)
                                             //建表的字段限制
                                             .mappings(m->m
                                                         .properties("documentId",p->p.long_(l->l))
@@ -64,7 +76,7 @@ public class ElasticsearchSearchService {
         createIndexIfAbsent();
 
         elasticsearchClient.index(i->i
-                                    .index(INDEX_NAME)
+                                    .index(indexName)
                                     .id(document.getDocumentId()+"_"+document.getChunkIndex())
                                     .document(document)
         );
@@ -86,7 +98,7 @@ public class ElasticsearchSearchService {
                     .index(index -> index
                             // index、id、document
                             //写入索引库
-                            .index(INDEX_NAME)
+                            .index(indexName)
                             //id
                             .id(document.getDocumentId()+"_"+document.getChunkIndex())
                             //写入内容
@@ -125,7 +137,7 @@ public class ElasticsearchSearchService {
         createIndexIfAbsent();
         DeleteByQueryResponse response =
         elasticsearchClient.deleteByQuery(request -> request
-                .index(INDEX_NAME)
+                .index(indexName)
                 .query(query -> query
                         .term(term -> term
                                 .field("documentId")
@@ -140,7 +152,7 @@ public class ElasticsearchSearchService {
     public long countByDocumentId(Long documentId) throws IOException {
         createIndexIfAbsent();
         CountResponse response = elasticsearchClient.count(request -> request
-                .index(INDEX_NAME)
+                .index(indexName)
                 .query(query -> query.term(term -> term.field("documentId").value(documentId))));
         return response.count();
     }
@@ -154,7 +166,7 @@ public class ElasticsearchSearchService {
      */
     public void refreshIndex()throws IOException{
         elasticsearchClient.indices()
-                            .refresh(r->r.index(INDEX_NAME)); //设置要刷新的索引
+                            .refresh(r->r.index(indexName)); //设置要刷新的索引
     }
 
     /**
@@ -191,7 +203,7 @@ public class ElasticsearchSearchService {
             return List.of();
         }
         SearchResponse<ElasticsearchChunkDocument> response = elasticsearchClient.search(request -> {
-            request.index(INDEX_NAME).size(maxResults);
+            request.index(indexName).size(maxResults);
             if (allowedDocumentIds == null) {
                 return request.query(queryBuilder -> queryBuilder
                         .match(match -> match.field("content").query(query)));

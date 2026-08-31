@@ -201,10 +201,14 @@ sequenceDiagram
     S->>L: chat(question) + tools
     alt 企业制度/业务资料问题
         L->>T: searchKnowledgeBase(query)
-        T->>H: searchHits(...)
-        H-->>T: List<RetrievalHit>
         T->>T: 检查 document:read
-        T-->>L: 有权限返回 hits，否则返回 []
+        alt 有 document:read
+            T->>H: searchHits(...)
+            H-->>T: List<RetrievalHit>
+            T-->>L: 返回 hits
+        else 无 document:read
+            T-->>L: 返回 []，不触发检索
+        end
         L-->>S: 基于工具结果回答
     else 普通问候
         L-->>S: 不调用工具，直接回答
@@ -221,13 +225,13 @@ sequenceDiagram
 
 ```text
 进入 Agent 前：qa:ask
-工具结果返回模型前：document:read
+进入混合检索前：document:read
 ```
 
 实测：
 
 - GUEST 没有 `qa:ask`，HTTP 403，模型调用和检索都不会发生。
-- QA-only 用户有 `qa:ask`、没有 `document:read`，可以进入 Agent，但工具返回空列表，citations 为空。
+- QA-only 用户有 `qa:ask`、没有 `document:read`，可以进入 Agent，但工具在调用 Redis、Elasticsearch 和 MySQL 前直接返回空列表，citations 为空。
 
 这不能宣称为逐文档 ACL。部门、租户、文档密级等过滤仍是后续生产化工作。
 

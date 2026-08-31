@@ -181,7 +181,7 @@ POST /api/ai/ask-stream：
 ```text
 把混合检索封装成 Agent 可调用的知识库工具
   -> Agent 根据问题选择是否调用工具
-  -> 工具调用前后执行最小权限过滤
+-> Agent 入口与工具检索前执行最小权限过滤
   -> 验证有权限用户可获得证据、无权限用户被拒绝
 ```
 
@@ -195,8 +195,8 @@ POST /api/ai/agent/ask
   -> KnowledgeAgentService 通过 AiServices 创建 Agent
   -> 模型根据问题决定是否调用 searchKnowledgeBase
   -> KnowledgeBaseTool 调用既有 HybridRetrievalService
+  -> 工具调用前检查 document:read
   -> Redis + Elasticsearch 召回、RRF、MySQL 补全 RetrievalHit
-  -> 工具返回模型前再次检查 document:read
   -> AgentResponse 返回 answer、toolUsed、toolNames、citations
 ```
 
@@ -209,7 +209,7 @@ GUEST 默认不授予业务权限
 
 临时 QA-only 验收身份只有 qa:ask、没有 document:read
   -> 能进入 Agent 并调用 searchKnowledgeBase
-  -> 检索结果在返回模型前被过滤为空
+  -> 工具在实际检索前直接返回空列表
   -> citations 为空
   -> 回答“未找到当前账号可访问的知识库内容”
 ```
@@ -228,7 +228,7 @@ toolNames=[]，citations=[]。
 GUEST 请求前权限：
 登录 HTTP 200，携带有效 JWT 请求 Agent 返回 HTTP 403。
 
-QA-only 检索后权限：
+QA-only 工具检索前权限：
 HTTP 200，toolUsed=true，
 toolNames=[searchKnowledgeBase]，citations=0，
 回答未找到当前账号可访问的知识库内容。
