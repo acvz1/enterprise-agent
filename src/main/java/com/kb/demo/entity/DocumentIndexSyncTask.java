@@ -70,6 +70,10 @@ public class DocumentIndexSyncTask {
     @Column(name = "last_error", columnDefinition = "TEXT")
     private String lastError;
 
+    /** 本次构建目标的版本号；DELETE 操作时为 null。 */
+    @Column(name = "target_version")
+    private Integer targetVersion;
+
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
@@ -107,4 +111,6 @@ public class DocumentIndexSyncTask {
     public void setLastError(String lastError) { this.lastError = lastError; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public Integer getTargetVersion() { return targetVersion; }
+    public void setTargetVersion(Integer targetVersion) { this.targetVersion = targetVersion; }
 }

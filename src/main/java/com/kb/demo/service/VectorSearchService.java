@@ -249,8 +249,10 @@ public class VectorSearchService {
         if(metadata==null||!metadata.containsKey("documentId")||!metadata.containsKey("chunkIndex"))return null;
         Long docId=metadata.getLong("documentId");
         Integer chunkIndex=metadata.getInteger("chunkIndex");
-        // 组装RerievalCandidate对象
-        return new RetrievalCandidate(docId,chunkIndex,match.score(),rank,RetrievalSource.REDIS_VECTOR);
+        Integer documentVersion = metadata.containsKey("documentVersion")
+                ? metadata.getInteger("documentVersion") : null;
+        return new RetrievalCandidate(docId, chunkIndex, match.score(), rank,
+                RetrievalSource.REDIS_VECTOR, documentVersion);
 
     }
     

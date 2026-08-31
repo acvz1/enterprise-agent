@@ -2,7 +2,6 @@ package com.kb.demo.dto;
 import java.util.Set;
 
 public class RetrievalHit {
-    // 检索命中结果
     private Long documentId;
     private Long chunkId;
     private Integer chunkIndex;
@@ -10,6 +9,7 @@ public class RetrievalHit {
     private String content;
     private double fusionScore;
     private Set<RetrievalSource> sources;
+    private Integer documentVersion;
 
     public RetrievalHit() {
     }
@@ -25,26 +25,13 @@ public class RetrievalHit {
         this.sources = sources;
     }
 
-    public Long getDocumentId() {
-        return documentId;
-    }
-    public Long getChunkId() {
-        return chunkId;
-    }
-    public Integer getChunkIndex() {
-        return chunkIndex;
-    }
-    public String getDocumentTitle() {
-        return documentTitle;
-    }
-    public String getContent() {
-        return content;
-    }
-    public double getFusionScore() {
-        return fusionScore;
-    }
-    public Set<RetrievalSource> getSources() {
-        return sources;
-    }
-
+    public Long getDocumentId() { return documentId; }
+    public Long getChunkId() { return chunkId; }
+    public Integer getChunkIndex() { return chunkIndex; }
+    public String getDocumentTitle() { return documentTitle; }
+    public String getContent() { return content; }
+    public double getFusionScore() { return fusionScore; }
+    public Set<RetrievalSource> getSources() { return sources; }
+    public Integer getDocumentVersion() { return documentVersion; }
+    public void setDocumentVersion(Integer documentVersion) { this.documentVersion = documentVersion; }
 }

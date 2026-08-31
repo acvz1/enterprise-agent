@@ -95,19 +95,22 @@ class RetrievalEvaluationV2IT {
         Path reportDirectory = reportDirectory(runId);
         RetrievalEvaluationV2.writeReports(reportDirectory, report, comparison);
 
-        assertThat(cases).hasSize(30);
+        assertThat(cases).hasSize(42);
         Map<EvaluationCategory, Long> categoryCounts = cases.stream()
                 .collect(Collectors.groupingBy(EvaluationCase::category, Collectors.counting()));
         assertThat(categoryCounts).containsExactlyInAnyOrderEntriesOf(Map.of(
-                EvaluationCategory.KEYWORD_EXACT, 4L,
-                EvaluationCategory.SEMANTIC_PARAPHRASE, 5L,
-                EvaluationCategory.MIXED, 5L,
+                EvaluationCategory.KEYWORD_EXACT, 5L,
+                EvaluationCategory.SEMANTIC_PARAPHRASE, 6L,
+                EvaluationCategory.MIXED, 6L,
                 EvaluationCategory.AMBIGUOUS, 3L,
                 EvaluationCategory.PERMISSION_SENSITIVE, 3L,
                 EvaluationCategory.NO_ANSWER, 4L,
-                EvaluationCategory.LEGACY_REGRESSION, 6L));
+                EvaluationCategory.LEGACY_REGRESSION, 15L));
         assertThat(cases).extracting(EvaluationCase::id).contains(
-                "legacy-06", "legacy-09", "legacy-11", "legacy-12", "legacy-13", "legacy-15");
+                "legacy-01", "legacy-02", "legacy-03", "legacy-04", "legacy-05",
+                "legacy-06", "legacy-07", "legacy-08", "legacy-09", "legacy-10",
+                "legacy-11", "legacy-12", "legacy-13", "legacy-14", "legacy-15",
+                "keyword-05", "semantic-01", "mixed-01");
         assertThat(report.overall()).containsKeys("VECTOR_ONLY", "BM25_ONLY", "HYBRID_RRF");
         assertThat(report.caseResults()).allSatisfy(result -> assertThat(result.vectorTopK()).allSatisfy(
                 candidate -> assertThat(candidate.rank()).isPositive()));

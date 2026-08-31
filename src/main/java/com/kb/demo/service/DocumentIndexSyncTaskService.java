@@ -19,7 +19,7 @@ import java.util.UUID;
 public class DocumentIndexSyncTaskService {
 
     public record SyncAttempt(Long documentId, DocumentIndexSyncTask.Operation operation,
-                              long generation, String token) {
+                              long generation, String token, Integer targetVersion) {
     }
 
     private final DocumentIndexSyncTaskRepository taskRepository;
@@ -47,7 +47,7 @@ public class DocumentIndexSyncTaskService {
      * Document 回滚时任务也随之回滚。
      */
     @Transactional
-    public void request(Long documentId, DocumentIndexSyncTask.Operation operation) {
+    public void request(Long documentId, DocumentIndexSyncTask.Operation operation, Integer targetVersion) {
         LocalDateTime now = LocalDateTime.now();
         DocumentIndexSyncTask task = taskRepository.findByDocumentId(documentId)
                 .orElseGet(() -> new DocumentIndexSyncTask(documentId, operation));
@@ -57,6 +57,7 @@ public class DocumentIndexSyncTaskService {
             task.setOperation(operation);
             task.setStatus(DocumentIndexSyncTask.Status.PENDING);
         }
+        task.setTargetVersion(targetVersion);
         task.setAttemptCount(0);
         task.setAttemptToken(null);
         task.setLastAttemptAt(null);
@@ -93,7 +94,7 @@ public class DocumentIndexSyncTaskService {
         task.setNextRetryAt(now.plusSeconds(runningTimeoutSeconds));
         task.setUpdatedAt(now);
         taskRepository.save(task);
-        return Optional.of(new SyncAttempt(task.getDocumentId(), task.getOperation(), task.getGeneration(), token));
+        return Optional.of(new SyncAttempt(task.getDocumentId(), task.getOperation(), task.getGeneration(), token, task.getTargetVersion()));
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

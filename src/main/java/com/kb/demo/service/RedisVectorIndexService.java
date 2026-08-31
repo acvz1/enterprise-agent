@@ -30,24 +30,27 @@ public class RedisVectorIndexService {
     }
 
     /**
-     * 记录某个文档在 Redis 中生成的向量 ID。
+     * 记录某个文档在 Redis 中生成的向量 ID（按版本分桶）。
      */
+    public void registerEmbedding(Long documentId, String embeddingId, Integer version) {
+        redisTemplate.opsForSet().add(registryKey(documentId, version), embeddingId);
+    }
+
+    /** 向后兼容：无版本参数时写入 v1 桶。 */
     public void registerEmbedding(Long documentId, String embeddingId) {
-        redisTemplate.opsForSet().add(registryKey(documentId), embeddingId);
+        registerEmbedding(documentId, embeddingId, 1);
     }
 
     /**
-     * 删除某个文档登记过的全部 Redis 向量。
-     *
-     * @return 实际删除的向量 key 数量
+     * 删除某个文档指定版本的全部 Redis 向量。
      */
-    public long deleteByDocumentId(Long documentId) {
-        String registryKey = registryKey(documentId);
+    public long deleteByDocumentIdAndVersion(Long documentId, Integer version) {
+        String registryKey = registryKey(documentId, version);
         Set<String> embeddingIds = redisTemplate.opsForSet().members(registryKey);
 
         if (embeddingIds == null || embeddingIds.isEmpty()) {
             redisTemplate.delete(registryKey);
-            logger.debug("Redis 中没有文档已登记的向量，documentId={}", documentId);
+            logger.debug("Redis 中没有文档 v{} 已登记的向量，documentId={}", version, documentId);
             return 0L;
         }
 
@@ -59,14 +62,52 @@ public class RedisVectorIndexService {
         redisTemplate.delete(registryKey);
 
         long count = deletedCount == null ? 0L : deletedCount;
-        logger.debug("Redis 文档向量删除完成，documentId={}, deletedCount={}", documentId, count);
+        logger.debug("Redis 文档 v{} 向量删除完成，documentId={}, deletedCount={}", version, documentId, count);
         return count;
     }
 
-    /** 当前文档登记的向量数量，用于写入后的最终一致性校验。 */
-    public long countByDocumentId(Long documentId) {
-        Long size = redisTemplate.opsForSet().size(registryKey(documentId));
+    /**
+     * 删除某个文档登记过的全部 Redis 向量（所有版本）。
+     *
+     * @return 实际删除的向量 key 数量
+     */
+    public long deleteByDocumentId(Long documentId) {
+        Set<String> registryKeys = redisTemplate.keys(DOCUMENT_REGISTRY_PREFIX + documentId + ":*");
+        if (registryKeys == null || registryKeys.isEmpty()) {
+            logger.debug("Redis 中没有文档已登记的向量，documentId={}", documentId);
+            return 0L;
+        }
+        long totalDeleted = 0L;
+        for (String registryKey : registryKeys) {
+            Set<String> embeddingIds = redisTemplate.opsForSet().members(registryKey);
+            if (embeddingIds != null && !embeddingIds.isEmpty()) {
+                List<String> embeddingKeys = embeddingIds.stream()
+                        .map(id -> EMBEDDING_KEY_PREFIX + id).toList();
+                Long deleted = redisTemplate.delete(embeddingKeys);
+                totalDeleted += deleted == null ? 0L : deleted;
+            }
+            redisTemplate.delete(registryKey);
+        }
+        logger.debug("Redis 文档向量全版本删除完成，documentId={}, deletedCount={}", documentId, totalDeleted);
+        return totalDeleted;
+    }
+
+    /** 指定版本的向量数量，用于 validateRebuild。 */
+    public long countByDocumentIdAndVersion(Long documentId, Integer version) {
+        Long size = redisTemplate.opsForSet().size(registryKey(documentId, version));
         return size == null ? 0L : size;
+    }
+
+    /** 当前文档登记的向量数量（所有版本之和），用于写入后的最终一致性校验。 */
+    public long countByDocumentId(Long documentId) {
+        Set<String> registryKeys = redisTemplate.keys(DOCUMENT_REGISTRY_PREFIX + documentId + ":*");
+        if (registryKeys == null || registryKeys.isEmpty()) return 0L;
+        long total = 0L;
+        for (String key : registryKeys) {
+            Long size = redisTemplate.opsForSet().size(key);
+            total += size == null ? 0L : size;
+        }
+        return total;
     }
 
     /**
@@ -82,7 +123,7 @@ public class RedisVectorIndexService {
         return deletedCount == null ? 0L : deletedCount;
     }
 
-    private String registryKey(Long documentId) {
-        return DOCUMENT_REGISTRY_PREFIX + documentId;
+    private String registryKey(Long documentId, Integer version) {
+        return DOCUMENT_REGISTRY_PREFIX + documentId + ":" + version;
     }
 }

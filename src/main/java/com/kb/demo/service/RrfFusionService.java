@@ -42,6 +42,31 @@ public class RrfFusionService {
         return result.subList(0, Math.min(topK, result.size()));
     }
 
+    /**
+     * Weighted RRF: score = vectorWeight/(k+vectorRank) + bm25Weight/(k+bm25Rank).
+     * Equal weights (1.0, 1.0) and k=60 reproduce the standard {@link #fuse} result.
+     */
+    public List<FusedRetrievalCandidate> fuse(
+            List<RetrievalCandidate> redisCandidates,
+            List<RetrievalCandidate> elasticsearchCandidates,
+            int topK,
+            double vectorWeight,
+            double bm25Weight,
+            double k) {
+
+        if (topK <= 0) {
+            return List.of();
+        }
+
+        Map<String, FusedRetrievalCandidate> fusedByChunk = new HashMap<>();
+        addCandidates(fusedByChunk, redisCandidates, vectorWeight, k);
+        addCandidates(fusedByChunk, elasticsearchCandidates, bm25Weight, k);
+
+        List<FusedRetrievalCandidate> result = new ArrayList<>(fusedByChunk.values());
+        result.sort(Comparator.comparingDouble(FusedRetrievalCandidate::getFusionScore).reversed());
+        return result.subList(0, Math.min(topK, result.size()));
+    }
+
     private void addCandidates(
             Map<String, FusedRetrievalCandidate> fusedByChunk,
             List<RetrievalCandidate> candidates) {
@@ -59,13 +84,51 @@ public class RrfFusionService {
             double fusionScore = rankContribution
                     + (current == null ? 0.0 : current.getFusionScore());
 
+            Integer version = candidate.getDocumentVersion() != null
+                    ? candidate.getDocumentVersion()
+                    : (current != null ? current.getDocumentVersion() : null);
             fusedByChunk.put(
                     key,
                     new FusedRetrievalCandidate(
                             candidate.getDocumentId(),
                             candidate.getChunkIndex(),
                             fusionScore,
-                            sources)
+                            sources,
+                            version)
+            );
+        }
+    }
+
+    private void addCandidates(
+            Map<String, FusedRetrievalCandidate> fusedByChunk,
+            List<RetrievalCandidate> candidates,
+            double weight,
+            double k) {
+
+        for (RetrievalCandidate candidate : candidates) {
+            String key = candidate.getDocumentId() + "_" + candidate.getChunkIndex();
+            FusedRetrievalCandidate current = fusedByChunk.get(key);
+
+            Set<RetrievalSource> sources = current == null
+                    ? new HashSet<>()
+                    : new HashSet<>(current.getSources());
+            sources.add(candidate.getSource());
+
+            double rankContribution = weight / (k + candidate.getRank());
+            double fusionScore = rankContribution
+                    + (current == null ? 0.0 : current.getFusionScore());
+
+            Integer version = candidate.getDocumentVersion() != null
+                    ? candidate.getDocumentVersion()
+                    : (current != null ? current.getDocumentVersion() : null);
+            fusedByChunk.put(
+                    key,
+                    new FusedRetrievalCandidate(
+                            candidate.getDocumentId(),
+                            candidate.getChunkIndex(),
+                            fusionScore,
+                            sources,
+                            version)
             );
         }
     }

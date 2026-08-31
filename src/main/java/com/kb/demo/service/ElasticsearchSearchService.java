@@ -56,14 +56,13 @@ public class ElasticsearchSearchService {
                         .value();
         if(exists)return;
         elasticsearchClient.indices().create(c->c
-                                            //索引库
-                                            .index(indexName)
-                                            //建表的字段限制
-                                            .mappings(m->m
-                                                        .properties("documentId",p->p.long_(l->l))
-                                                        .properties("chunkIndex",p->p.integer(i->i))
-                                                        .properties("content",p->p.text(t->t))
-                                            )   
+                .index(indexName)
+                .mappings(m->m
+                        .properties("documentId",p->p.long_(l->l))
+                        .properties("chunkIndex",p->p.integer(i->i))
+                        .properties("content",p->p.text(t->t))
+                        .properties("documentVersion",p->p.integer(i->i))
+                )
         );
     }
     
@@ -74,11 +73,10 @@ public class ElasticsearchSearchService {
      */
     public void indexChunk(ElasticsearchChunkDocument document) throws IOException{
         createIndexIfAbsent();
-
         elasticsearchClient.index(i->i
-                                    .index(indexName)
-                                    .id(document.getDocumentId()+"_"+document.getChunkIndex())
-                                    .document(document)
+                .index(indexName)
+                .id(esDocId(document.getDocumentId(), document.getChunkIndex(), document.getDocumentVersion()))
+                .document(document)
         );
     }
 
@@ -94,14 +92,9 @@ public class ElasticsearchSearchService {
         for (ElasticsearchChunkDocument document : documents) {
             //请求里装操作，操作里装写入，写入里装数据
             builder.operations(operation -> operation
-                    //写入
                     .index(index -> index
-                            // index、id、document
-                            //写入索引库
                             .index(indexName)
-                            //id
-                            .id(document.getDocumentId()+"_"+document.getChunkIndex())
-                            //写入内容
+                            .id(esDocId(document.getDocumentId(), document.getChunkIndex(), document.getDocumentVersion()))
                             .document(document)
                     ));
         }
@@ -155,6 +148,34 @@ public class ElasticsearchSearchService {
                 .index(indexName)
                 .query(query -> query.term(term -> term.field("documentId").value(documentId))));
         return response.count();
+    }
+
+    /** 按文档 ID + 版本号统计 ES chunks，用于 validateRebuild。 */
+    public long countByDocumentIdAndVersion(Long documentId, Integer version) throws IOException {
+        createIndexIfAbsent();
+        CountResponse response = elasticsearchClient.count(request -> request
+                .index(indexName)
+                .query(query -> query.bool(bool -> bool
+                        .filter(f -> f.term(t -> t.field("documentId").value(documentId)))
+                        .filter(f -> f.term(t -> t.field("documentVersion").value(version))))));
+        return response.count();
+    }
+
+    /** 按文档 ID + 版本号删除 ES chunks，用于 GC 旧版本或重试前清理部分写入的 v2。 */
+    public long deleteByDocumentIdAndVersion(Long documentId, Integer version) throws IOException {
+        createIndexIfAbsent();
+        DeleteByQueryResponse response = elasticsearchClient.deleteByQuery(request -> request
+                .index(indexName)
+                .query(query -> query.bool(bool -> bool
+                        .filter(f -> f.term(t -> t.field("documentId").value(documentId)))
+                        .filter(f -> f.term(t -> t.field("documentVersion").value(version))))));
+        return response.deleted() == null ? 0L : response.deleted();
+    }
+
+    private static String esDocId(Long documentId, Integer chunkIndex, Integer version) {
+        return version == null
+                ? documentId + "_" + chunkIndex
+                : documentId + "_" + chunkIndex + "_v" + version;
     }
 
 
@@ -231,9 +252,11 @@ public class ElasticsearchSearchService {
             if (minimumScore != null && rawScore < minimumScore) {
                 continue;
             }
-            //rank持续加一
             int rank=candidates.size()+1;
-            RetrievalCandidate candidate=new RetrievalCandidate(chunkDocument.getDocumentId(),chunkDocument.getChunkIndex(), rawScore, rank, RetrievalSource.ELASTICSEARCH_BM25);
+            RetrievalCandidate candidate=new RetrievalCandidate(
+                    chunkDocument.getDocumentId(), chunkDocument.getChunkIndex(),
+                    rawScore, rank, RetrievalSource.ELASTICSEARCH_BM25,
+                    chunkDocument.getDocumentVersion());
             candidates.add(candidate);
         }
         return candidates;

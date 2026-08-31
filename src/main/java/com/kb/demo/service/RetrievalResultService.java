@@ -3,6 +3,7 @@ package com.kb.demo.service;
 import org.springframework.stereotype.Service;
 
 import com.kb.demo.repository.DocumentChunkRepository;
+import com.kb.demo.repository.DocumentRepository;
 import com.kb.demo.dto.RetrievalHit;
 import com.kb.demo.entity.DocumentChunk;
 import com.kb.demo.dto.FusedRetrievalCandidate;
@@ -19,22 +20,19 @@ import java.util.HashMap;
 @Service
 public class RetrievalResultService {
     private final DocumentChunkRepository documentChunkRepository;
+    private final DocumentRepository documentRepository;
 
-    public RetrievalResultService(DocumentChunkRepository documentChunkRepository) {
+    public RetrievalResultService(DocumentChunkRepository documentChunkRepository,
+                                  DocumentRepository documentRepository) {
         this.documentChunkRepository = documentChunkRepository;
+        this.documentRepository = documentRepository;
     }
 
-    /**
-     * 将 RRF 融合后的候选批量补全为最终检索结果。
-     *
-     * @param candidates 已按融合分数排序的候选列表
-     * @return 包含文档标题、分块原文、融合分数和命中来源的结果列表
-     */
     public List<RetrievalHit> assembleHits(List<FusedRetrievalCandidate> candidates){
         return assembleHits(candidates, null);
     }
 
-    /** 以 MySQL 的部门关联作为最终权威校验。 */
+    /** 以 MySQL 的部门关联作为最终权威校验，并拒绝版本已过期的 stale candidates。 */
     public List<RetrievalHit> assembleHits(List<FusedRetrievalCandidate> candidates,
             DepartmentAccessService.AccessScope scope){
         if(candidates.size()==0)return List.of();
@@ -44,31 +42,43 @@ public class RetrievalResultService {
             documentIds.add(candidate.getDocumentId());
             chunkIndexes.add(candidate.getChunkIndex());
         }
-        //对文档id集合与chunkid集合查表求总和
+
+        // 批量加载 activeVersion，用于 stale candidate 拦截
+        Map<Long, Integer> activeVersionMap = new HashMap<>();
+        for (Object[] row : documentRepository.findActiveVersionsByIds(documentIds)) {
+            Long docId = (Long) row[0];
+            Integer av = (Integer) row[1];
+            activeVersionMap.put(docId, av);
+        }
+
         List<DocumentChunk> chunks = scope == null || scope.global()
                 ? documentChunkRepository.findCandidateChunksWithDocument(documentIds, chunkIndexes)
                 : scope.departmentIds().isEmpty() ? List.of()
                         : documentChunkRepository.findCandidateChunksWithDocumentAndDepartments(documentIds, chunkIndexes, scope.departmentIds());
-        //建立哈希表方便用唯一索引查找对应
+
         Map<String,DocumentChunk>chunkByKey=new HashMap<>();
         for(DocumentChunk chunk:chunks){
+            // 版本过滤：只保留与 activeVersion 匹配的 chunks
+            Integer activeVersion = activeVersionMap.get(chunk.getDocument().getId());
+            if (activeVersion != null && chunk.getDocumentVersion() != null
+                    && !chunk.getDocumentVersion().equals(activeVersion)) {
+                continue;
+            }
             String key=chunk.getDocument().getId()+"_"+chunk.getChunkIndex();
             chunkByKey.put(key,chunk);
         }
+
         List<RetrievalHit>hits=new ArrayList<>();
-        //提取需要的chunk的document
         for(FusedRetrievalCandidate candidate:candidates){
             String key=candidate.getDocumentId()+"_"+candidate.getChunkIndex();
-            if(chunkByKey.get(key)==null)continue;
-            else{
-                DocumentChunk chunk=chunkByKey.get(key);
-                RetrievalHit hit=new RetrievalHit(candidate.getDocumentId(),chunk.getId(),candidate.getChunkIndex(),
-                                                chunk.getDocument().getTitle(),chunk.getContent(),candidate.getFusionScore()
-                                                    ,candidate.getSources());
-                hits.add(hit);                    
-            }
+            DocumentChunk chunk=chunkByKey.get(key);
+            if(chunk==null)continue;
+            RetrievalHit hit=new RetrievalHit(candidate.getDocumentId(),chunk.getId(),candidate.getChunkIndex(),
+                                            chunk.getDocument().getTitle(),chunk.getContent(),candidate.getFusionScore(),
+                                            candidate.getSources());
+            hit.setDocumentVersion(chunk.getDocumentVersion());
+            hits.add(hit);
         }
         return hits;
     }
-    
 }
