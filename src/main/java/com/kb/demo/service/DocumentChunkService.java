@@ -4,11 +4,13 @@ import com.kb.demo.dto.ElasticsearchChunkDocument;
 import com.kb.demo.entity.Document;
 import com.kb.demo.entity.DocumentChunk;
 import com.kb.demo.repository.DocumentChunkRepository;
+import com.kb.demo.repository.DocumentRepository;
+import org.springframework.scheduling.annotation.Async;
 import dev.langchain4j.data.document.DocumentSplitter;
 import dev.langchain4j.data.document.splitter.DocumentSplitters;
+import com.kb.demo.config.EmbeddingModelConfig;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.redis.RedisEmbeddingStore;
 import dev.langchain4j.data.document.Metadata;
@@ -41,6 +43,9 @@ public class DocumentChunkService {
     
     @Autowired
     private DocumentChunkRepository documentChunkRepository;
+
+    @Autowired
+    private DocumentRepository documentRepository;
     
     @Autowired
     private RedisTemplate<String, ?> redisTemplate;
@@ -56,7 +61,10 @@ public class DocumentChunkService {
 
     @Autowired
     private DocumentIndexSyncTaskService indexSyncTaskService;
-    
+
+    @Autowired
+    private EmbeddingModel embeddingModel;
+
     @Autowired
     private ApplicationContext applicationContext;
     
@@ -92,6 +100,27 @@ public class DocumentChunkService {
     public int processDocument(Long documentId) {
         return processDocumentWithProgress(documentId, null);
     }
+
+    /** 版本化入口：显式传入 targetVersion，写入 outbox 后由 afterCommit 触发重建。 */
+    public int processDocumentWithVersion(Long documentId, Integer targetVersion) {
+        boolean transactionActive = TransactionSynchronizationManager.isSynchronizationActive();
+        indexSyncTaskService.request(documentId,
+                com.kb.demo.entity.DocumentIndexSyncTask.Operation.REBUILD, targetVersion);
+        if (!transactionActive) {
+            return getSelf().retryRebuild(documentId);
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    getSelf().retryRebuild(documentId);
+                } catch (Exception exception) {
+                    logger.warn("post-commit rebuild failed, will retry, documentId={}", documentId, exception);
+                }
+            }
+        });
+        return 0;
+    }
     
     /**
      * 对文档进行分块和向量化处理（支持进度回调）
@@ -103,7 +132,7 @@ public class DocumentChunkService {
         boolean deferredUntilCommit = enqueueAndDispatchAfterCommit(
                 documentId, com.kb.demo.entity.DocumentIndexSyncTask.Operation.REBUILD);
         // 在 DocumentService 的业务事务中，只提交 outbox；afterCommit 再写外部索引。
-        // 单独调用“手动向量化”时没有外层事务，任务已先提交，可立即执行并返回 chunk 数。
+        // 单独调用"手动向量化"时没有外层事务，任务已先提交，可立即执行并返回 chunk 数。
         return deferredUntilCommit ? 0 : getSelf().retryRebuild(documentId, progressCallback);
     }
 
@@ -134,7 +163,6 @@ public class DocumentChunkService {
         try {
             Document document = getDocumentService().getDocumentById(documentId);
             if (document == null) {
-                // 上游 MySQL 事务回滚或文档已删除时，索引也必须收敛为“没有该文档”。
                 deleteIndexData(documentId);
                 documentChunkRepository.deleteByDocumentId(documentId);
                 validateDelete(documentId);
@@ -142,51 +170,78 @@ public class DocumentChunkService {
                 return 0;
             }
 
-            aiService.invalidateAnswersByDocumentId(documentId);
-            Long docId = document.getId();
-            long deletedRedisVectors = redisVectorIndexService.deleteByDocumentId(documentId);
-            logger.debug("✅ [Redis] 文档旧向量删除完成，文档ID: {}, 删除 {} 条", documentId, deletedRedisVectors);
-            documentChunkRepository.deleteByDocumentId(documentId);
+            Integer targetVersion = attempt.get().targetVersion();
+            if (targetVersion == null) {
+                targetVersion = document.getCurrentVersion() != null ? document.getCurrentVersion() : 1;
+            }
+            Integer activeVersion = document.getActiveVersion() != null ? document.getActiveVersion() : 1;
 
+            // --- A. 清理可能残留的部分写入的 targetVersion 数据（幂等重试安全）---
+            documentChunkRepository.deleteByDocumentIdAndDocumentVersion(documentId, targetVersion);
+            redisVectorIndexService.deleteByDocumentIdAndVersion(documentId, targetVersion);
+            elasticsearchSearchService.deleteByDocumentIdAndVersion(documentId, targetVersion);
+
+            // --- B. BUILD v{targetVersion} ---
+            Long docId = document.getId();
             DocumentSplitter splitter = DocumentSplitters.recursive(CHUNK_SIZE, OVERLAP_SIZE);
             dev.langchain4j.data.document.Document langchainDocument =
                     dev.langchain4j.data.document.Document.from(document.getContent());
             List<TextSegment> segments = splitter.split(langchainDocument);
-            logger.info("✅ [文档分块] 文档被分割为 {} 个块，文档ID: {}", segments.size(), documentId);
+            logger.info("[DocumentChunk] split into {} segments, documentId={}, targetVersion={}", segments.size(), documentId, targetVersion);
 
-            EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
             EmbeddingStore<TextSegment> embeddingStore = RedisEmbeddingStore.builder()
                     .host(redisHost)
                     .port(redisPort)
-                    .dimension(384)
+                    .dimension(EmbeddingModelConfig.EMBEDDING_DIMENSION)
                     .indexName("document-embeddings")
-                    .metadataKeys(List.of("documentId", "chunkIndex"))
+                    .metadataKeys(List.of("documentId", "chunkIndex", "documentVersion"))
                     .build();
             List<ElasticsearchChunkDocument> elasticsearchDocuments = new ArrayList<>();
 
+            final int tv = targetVersion;
             for (int i = 0; i < segments.size(); i++) {
                 TextSegment segment = segments.get(i);
-                documentChunkRepository.insertChunk(docId, i, segment.text());
-                Metadata metadata = new Metadata().put("documentId", docId).put("chunkIndex", i);
+                documentChunkRepository.insertChunkWithVersion(docId, i, segment.text(), tv);
+                Metadata metadata = new Metadata()
+                        .put("documentId", docId)
+                        .put("chunkIndex", i)
+                        .put("documentVersion", tv);
                 TextSegment indexedSegment = TextSegment.from(segment.text(), metadata);
                 String embeddingId = embeddingStore.add(embeddingModel.embed(indexedSegment.text()).content(), indexedSegment);
-                redisVectorIndexService.registerEmbedding(docId, embeddingId);
-                elasticsearchDocuments.add(new ElasticsearchChunkDocument(docId, i, segment.text()));
+                redisVectorIndexService.registerEmbedding(docId, embeddingId, tv);
+                elasticsearchDocuments.add(new ElasticsearchChunkDocument(docId, i, segment.text(), tv));
 
                 if ((i + 1) % 10 == 0 || i == segments.size() - 1) {
-                    if (progressCallback != null) {
-                        progressCallback.accept(i + 1, segments.size());
-                    }
+                    if (progressCallback != null) progressCallback.accept(i + 1, segments.size());
                     logger.debug("[向量化进度] 已处理 {}/{} 个块", i + 1, segments.size());
                 }
             }
 
-            elasticsearchSearchService.deleteByDocumentId(docId);
             elasticsearchSearchService.indexChunks(elasticsearchDocuments);
             elasticsearchSearchService.refreshIndex();
-            validateRebuild(docId, segments.size());
+
+            // --- C. VALIDATE ---
+            validateRebuildVersion(docId, tv, segments.size());
+
+            // --- D. SWITCH（CAS）---
+            int affected = documentRepository.casActiveVersion(docId, activeVersion, tv);
+            if (affected == 0) {
+                // 并发更新：本次 v{targetVersion} 已被更新的文档版本覆盖，视为已废弃
+                logger.warn("CAS switch activeVersion failed, possibly overwritten by newer version, documentId={}, targetVersion={}", documentId, tv);
+                indexSyncTaskService.markSuccess(attempt.get());
+                scheduleGcAsync(docId, tv);
+                return segments.size();
+            }
+
+            // --- E. 失效答案缓存 ---
+            aiService.invalidateAnswersByDocumentId(documentId);
+            logger.info("[DocumentChunk] version switch done, documentId={}, activeVersion={}->{}", documentId, activeVersion, tv);
+
             indexSyncTaskService.markSuccess(attempt.get());
-            logger.info("✅ [文档分块] 索引同步完成且校验通过，documentId: {}, 共处理 {} 个块", documentId, segments.size());
+
+            // --- F. 异步 GC 旧版本 ---
+            scheduleGcAsync(docId, activeVersion);
+
             return segments.size();
         } catch (Exception exception) {
             indexSyncTaskService.markFailure(attempt.get(), exception);
@@ -266,7 +321,7 @@ public class DocumentChunkService {
     private boolean enqueueAndDispatchAfterCommit(
             Long documentId, com.kb.demo.entity.DocumentIndexSyncTask.Operation operation) {
         boolean transactionActive = TransactionSynchronizationManager.isSynchronizationActive();
-        indexSyncTaskService.request(documentId, operation);
+        indexSyncTaskService.request(documentId, operation, null);
         if (!transactionActive) {
             return false;
         }
@@ -341,6 +396,36 @@ public class DocumentChunkService {
                     + ", mysql=" + mysqlCount
                     + ", redis=" + redisCount
                     + ", elasticsearch=" + esCount);
+        }
+    }
+
+    /** 按版本校验三侧 chunk 数量，用于版本化 BUILD 后的验证。 */
+    private void validateRebuildVersion(Long documentId, Integer version, int expectedCount) throws IOException {
+        long mysqlCount = documentChunkRepository.countByDocumentIdAndDocumentVersion(documentId, version);
+        long redisCount = redisVectorIndexService.countByDocumentIdAndVersion(documentId, version);
+        long esCount = elasticsearchSearchService.countByDocumentIdAndVersion(documentId, version);
+        if (mysqlCount != expectedCount || redisCount != expectedCount || esCount != expectedCount) {
+            throw new IllegalStateException("版本化索引分块数量不一致，documentId=" + documentId
+                    + ", version=" + version
+                    + ", expected=" + expectedCount
+                    + ", mysql=" + mysqlCount
+                    + ", redis=" + redisCount
+                    + ", elasticsearch=" + esCount);
+        }
+    }
+
+    /** 异步 GC：CAS 切换成功后删除旧版本三侧数据，失败仅记录日志不影响新版本服务。 */
+    @Async
+    public void scheduleGcAsync(Long documentId, Integer oldVersion) {
+        if (oldVersion == null) return;
+        try {
+            documentChunkRepository.deleteByDocumentIdAndDocumentVersion(documentId, oldVersion);
+            redisVectorIndexService.deleteByDocumentIdAndVersion(documentId, oldVersion);
+            elasticsearchSearchService.deleteByDocumentIdAndVersion(documentId, oldVersion);
+            elasticsearchSearchService.refreshIndex();
+            logger.info("✅ [GC] 旧版本数据清理完成，documentId={}, oldVersion={}", documentId, oldVersion);
+        } catch (Exception e) {
+            logger.warn("GC 旧版本数据失败，documentId={}, oldVersion={}，将在下次重建时清理", documentId, oldVersion, e);
         }
     }
 

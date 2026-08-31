@@ -34,7 +34,8 @@ flowchart LR
     L -->|需要企业知识| T["KnowledgeBaseTool"]
     L -->|普通问候| R["AgentResponse"]
 
-    T --> H["HybridRetrievalService"]
+    T --> D["document:read 权限检查"]
+    D --> H["HybridRetrievalService"]
     H --> V["Redis Vector Search"]
     H --> E["Elasticsearch BM25"]
     V --> C1["RetrievalCandidate"]
@@ -43,8 +44,7 @@ flowchart LR
     C2 --> F
     F --> K["Top K 候选"]
     K --> M["MySQL 一次批量 JOIN\n补全权威 chunk + title"]
-    M --> D["document:read 二次权限检查"]
-    D --> X["RetrievalHit / 引用证据"]
+    M --> X["RetrievalHit / 引用证据"]
     X --> L
     L --> R
 ```
@@ -98,8 +98,8 @@ Copy-Item .env.template .env
 .\mvnw.cmd spring-boot:run
 
 # 4. 前端（新终端）
-Set-Location ai-assistant-front
-npm.cmd ci
+cd ai-assistant-front
+npm.cmd install
 npm.cmd run dev -- --host 127.0.0.1
 ```
 

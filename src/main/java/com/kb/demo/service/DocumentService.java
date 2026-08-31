@@ -172,21 +172,21 @@ public class DocumentService {
             
             try {
                 documentVersionService.createVersion(id, changeSummary, "系统");
-                
-                // 更新当前版本号
+
                 Integer maxVersionNumber = documentVersionService.getDocumentVersionRepository().findMaxVersionNumberByDocumentId(id);
                 updatedDocument.setCurrentVersion(maxVersionNumber);
+                // activeVersion 保持不变，等 BUILD 完成 CAS 切换
                 documentRepository.save(updatedDocument);
             } catch (RuntimeException e) {
-                // 创建版本失败，但文档更新已经成功，记录日志但不抛出异常
                 System.err.println("创建文档版本失败: " + e.getMessage());
             }
         }
 
-        // 正文变化后同步重建MySQL分块、Redis向量和Elasticsearch索引。
-        // 仅修改标题时无需重新计算Embedding；最终标题由MySQL Document补全。
         if (contentChanged) {
-            documentChunkService.processDocument(id);
+            // processDocument 内部通过 SyncAttempt.targetVersion 携带目标版本号
+            Integer targetVersion = updatedDocument.getCurrentVersion() != null
+                    ? updatedDocument.getCurrentVersion() : 1;
+            documentChunkService.processDocumentWithVersion(id, targetVersion);
         }
         
         return updatedDocument;

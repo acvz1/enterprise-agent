@@ -9,8 +9,9 @@ import com.kb.demo.dto.FusedRetrievalCandidate;
 import com.kb.demo.dto.RetrievalCandidate;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.segment.TextSegment;
+import com.kb.demo.config.EmbeddingModelConfig;
 import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
+import dev.langchain4j.model.embedding.onnx.bgesmallzhv15.BgeSmallZhV15EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.redis.RedisEmbeddingStore;
 import org.apache.http.HttpHost;
@@ -65,7 +66,7 @@ public class RetrievalEvaluationIT {
         redisEmbeddingStore = RedisEmbeddingStore.builder()
                 .host("localhost")
                 .port(6379)
-                .dimension(384)
+                .dimension(EmbeddingModelConfig.EMBEDDING_DIMENSION)
                 .indexName("document-embeddings")
                 .metadataKeys(List.of("documentId", "chunkIndex"))
                 .build();
@@ -242,7 +243,7 @@ public class RetrievalEvaluationIT {
     }
 
     private void indexEvaluationData() throws IOException {
-        EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
+        EmbeddingModel embeddingModel = new BgeSmallZhV15EmbeddingModel();
         List<ElasticsearchChunkDocument> elasticsearchDocuments = new ArrayList<>();
 
         for (EvaluationChunk chunk : evaluationChunks()) {

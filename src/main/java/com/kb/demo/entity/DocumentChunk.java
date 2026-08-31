@@ -29,6 +29,9 @@ public class DocumentChunk {
     @Column(name = "content", nullable = false, columnDefinition = "TEXT")
     private String content;
     
+    @Column(name = "document_version", nullable = false)
+    private Integer documentVersion;
+
     @Column(name = "embedding_vector", columnDefinition = "BLOB")
     @JdbcTypeCode(SqlTypes.BLOB)
     private byte[] embeddingVector;
@@ -96,9 +99,17 @@ public class DocumentChunk {
     public byte[] getEmbeddingVector() {
         return embeddingVector;
     }
-    
+
     public void setEmbeddingVector(byte[] embeddingVector) {
         this.embeddingVector = embeddingVector;
+    }
+
+    public Integer getDocumentVersion() {
+        return documentVersion;
+    }
+
+    public void setDocumentVersion(Integer documentVersion) {
+        this.documentVersion = documentVersion;
     }
     
     public LocalDateTime getCreatedAt() {

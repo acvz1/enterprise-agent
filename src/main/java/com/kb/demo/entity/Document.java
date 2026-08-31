@@ -68,6 +68,10 @@ public class Document {
     @Column(name = "current_version")
     private Integer currentVersion;
 
+    /** 检索层使用的活跃版本号；BUILD 完成并通过校验后 CAS 切换，与 currentVersion 分离。 */
+    @Column(name = "active_version", nullable = false)
+    private Integer activeVersion = 1;
+
     @Column(name = "file_type")
     private String fileType;
 
@@ -158,6 +162,14 @@ public class Document {
 
     public void setCurrentVersion(Integer currentVersion) {
         this.currentVersion = currentVersion;
+    }
+
+    public Integer getActiveVersion() {
+        return activeVersion;
+    }
+
+    public void setActiveVersion(Integer activeVersion) {
+        this.activeVersion = activeVersion;
     }
 
     public String getFileType() {

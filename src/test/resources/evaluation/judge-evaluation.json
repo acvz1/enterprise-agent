@@ -1,0 +1,122 @@
+[
+  {
+    "id": "judge-safe-01",
+    "query": "你好",
+    "expectedVerdict": "SAFE_GENERAL",
+    "notes": "纯问候，无企业事实需求"
+  },
+  {
+    "id": "judge-safe-02",
+    "query": "今天天气怎么样",
+    "expectedVerdict": "SAFE_GENERAL",
+    "notes": "天气查询，与企业知识库无关"
+  },
+  {
+    "id": "judge-safe-03",
+    "query": "帮我写一首关于春天的诗",
+    "expectedVerdict": "SAFE_GENERAL",
+    "notes": "创作请求，不涉及企业事实"
+  },
+  {
+    "id": "judge-safe-04",
+    "query": "1+1等于几",
+    "expectedVerdict": "SAFE_GENERAL",
+    "notes": "数学常识，无需查询知识库"
+  },
+  {
+    "id": "judge-safe-05",
+    "query": "Python 和 Java 哪个更适合做数据分析",
+    "expectedVerdict": "SAFE_GENERAL",
+    "notes": "通用技术问题，不依赖企业知识库"
+  },
+  {
+    "id": "judge-safe-06",
+    "query": "谢谢你的帮助",
+    "expectedVerdict": "SAFE_GENERAL",
+    "notes": "礼貌用语，无信息需求"
+  },
+  {
+    "id": "judge-kb-01",
+    "query": "年假要提前几个工作日申请",
+    "expectedVerdict": "REQUIRES_KB",
+    "notes": "企业年假制度，必须查知识库"
+  },
+  {
+    "id": "judge-kb-02",
+    "query": "差旅费报销流程是什么",
+    "expectedVerdict": "REQUIRES_KB",
+    "notes": "企业报销制度，需要知识库支持"
+  },
+  {
+    "id": "judge-kb-03",
+    "query": "采购系统如何创建采购申请单",
+    "expectedVerdict": "REQUIRES_KB",
+    "notes": "企业系统操作，必须查知识库"
+  },
+  {
+    "id": "judge-kb-04",
+    "query": "员工入职需要准备哪些材料",
+    "expectedVerdict": "REQUIRES_KB",
+    "notes": "企业人事流程，需查知识库"
+  },
+  {
+    "id": "judge-kb-05",
+    "query": "绩效考核周期是多久",
+    "expectedVerdict": "REQUIRES_KB",
+    "notes": "企业绩效制度，必须查知识库"
+  },
+  {
+    "id": "judge-kb-06",
+    "query": "公司的保密协议什么时候签",
+    "expectedVerdict": "REQUIRES_KB",
+    "notes": "企业合规制度，需查知识库"
+  },
+  {
+    "id": "judge-kb-07",
+    "query": "出差补贴标准是多少",
+    "expectedVerdict": "REQUIRES_KB",
+    "notes": "企业出差政策，必须查知识库"
+  },
+  {
+    "id": "judge-kb-08",
+    "query": "OA 系统怎么申请加班",
+    "expectedVerdict": "REQUIRES_KB",
+    "notes": "企业系统功能，必须查知识库"
+  },
+  {
+    "id": "judge-kb-09",
+    "query": "试用期多长时间",
+    "expectedVerdict": "REQUIRES_KB",
+    "notes": "企业人事制度，需查知识库"
+  },
+  {
+    "id": "judge-kb-10",
+    "query": "公司规定的工作时间是几点到几点",
+    "expectedVerdict": "REQUIRES_KB",
+    "notes": "企业考勤制度，必须查知识库"
+  },
+  {
+    "id": "judge-uncertain-01",
+    "query": "怎么提高工作效率",
+    "expectedVerdict": "UNCERTAIN",
+    "notes": "可能是通用建议，也可能指企业内部工具/流程，判断不确定"
+  },
+  {
+    "id": "judge-uncertain-02",
+    "query": "有什么注意事项吗",
+    "expectedVerdict": "UNCERTAIN",
+    "notes": "上下文缺失，无法确定是否涉及企业事实"
+  },
+  {
+    "id": "judge-uncertain-03",
+    "query": "流程是什么",
+    "expectedVerdict": "UNCERTAIN",
+    "notes": "过于模糊，保守处理"
+  },
+  {
+    "id": "judge-uncertain-04",
+    "query": "这个要多少钱",
+    "expectedVerdict": "UNCERTAIN",
+    "notes": "引用不明，可能涉及企业定价或采购，保守处理"
+  }
+]

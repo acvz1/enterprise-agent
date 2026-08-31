@@ -8,8 +8,12 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.transaction.annotation.Transactional;
+
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Repository
@@ -128,4 +132,16 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
     /** 只取当前数据范围可见的文档 ID，供检索候选在 RRF 前过滤。 */
     @Query("SELECT DISTINCT d.id FROM Document d JOIN d.visibleDepartments department WHERE department.id IN :departmentIds")
     Set<Long> findReadableDocumentIds(@Param("departmentIds") Set<Long> departmentIds);
+
+    /** CAS 切换 active_version：仅当当前值等于 expectedVersion 时才更新，返回受影响行数。 */
+    @Modifying
+    @Transactional
+    @Query("UPDATE Document d SET d.activeVersion = :newVersion WHERE d.id = :id AND d.activeVersion = :expectedVersion")
+    int casActiveVersion(@Param("id") Long id,
+                         @Param("expectedVersion") Integer expectedVersion,
+                         @Param("newVersion") Integer newVersion);
+
+    /** 批量查询指定文档的 activeVersion，供检索层版本过滤使用。 */
+    @Query("SELECT d.id, d.activeVersion FROM Document d WHERE d.id IN :ids")
+    List<Object[]> findActiveVersionsByIds(@Param("ids") Set<Long> ids);
 }

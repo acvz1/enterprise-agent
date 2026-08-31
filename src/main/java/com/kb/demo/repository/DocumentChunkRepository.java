@@ -76,17 +76,15 @@ public interface DocumentChunkRepository extends JpaRepository<DocumentChunk, Lo
     
     /**
      * 使用原生SQL保存文档块，避免Hibernate字节码增强问题
-     * @param documentId 文档ID
-     * @param chunkIndex 块索引
-     * @param content 内容
      */
     @Modifying
     @Transactional
-    @Query(value = "INSERT INTO document_chunks (document_id, chunk_index, content, created_at, updated_at) " +
-                   "VALUES (:documentId, :chunkIndex, :content, NOW(), NOW())", nativeQuery = true)
-    void insertChunk(@Param("documentId") Long documentId, 
-                    @Param("chunkIndex") Integer chunkIndex, 
-                    @Param("content") String content);
+    @Query(value = "INSERT INTO document_chunks (document_id, chunk_index, content, document_version, created_at, updated_at) " +
+                   "VALUES (:documentId, :chunkIndex, :content, :documentVersion, NOW(), NOW())", nativeQuery = true)
+    void insertChunkWithVersion(@Param("documentId") Long documentId,
+                                @Param("chunkIndex") Integer chunkIndex,
+                                @Param("content") String content,
+                                @Param("documentVersion") Integer documentVersion);
 
     /**
      * 批量查询DocumentChunk同时取回所属Document
@@ -119,4 +117,30 @@ public interface DocumentChunkRepository extends JpaRepository<DocumentChunk, Lo
         @Param("documentIds") Set<Long> documentIds,
         @Param("chunkIndexes") Set<Integer> chunkIndexes,
         @Param("departmentIds") Set<Long> departmentIds);
+
+    /** 按文档 ID 和版本号删除 chunks，用于 GC 旧版本或重试前清理部分写入的 v2。 */
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM DocumentChunk dc WHERE dc.document.id = :documentId AND dc.documentVersion = :documentVersion")
+    void deleteByDocumentIdAndDocumentVersion(@Param("documentId") Long documentId,
+                                              @Param("documentVersion") Integer documentVersion);
+
+    /** 统计指定文档指定版本的 chunk 数量，用于 validateRebuild。 */
+    @Query("SELECT COUNT(dc) FROM DocumentChunk dc WHERE dc.document.id = :documentId AND dc.documentVersion = :documentVersion")
+    Long countByDocumentIdAndDocumentVersion(@Param("documentId") Long documentId,
+                                             @Param("documentVersion") Integer documentVersion);
+
+    /** 按版本查询 chunk（带 Document JOIN FETCH），用于 stale candidate 校验。 */
+    @Query("""
+    SELECT dc
+    FROM DocumentChunk dc
+    JOIN FETCH dc.document d
+    WHERE d.id IN :documentIds
+      AND dc.chunkIndex IN :chunkIndexes
+      AND dc.documentVersion = :documentVersion
+    """)
+    List<DocumentChunk> findCandidateChunksWithDocumentAndVersion(
+        @Param("documentIds") Set<Long> documentIds,
+        @Param("chunkIndexes") Set<Integer> chunkIndexes,
+        @Param("documentVersion") Integer documentVersion);
 }

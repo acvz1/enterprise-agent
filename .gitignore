@@ -12,6 +12,7 @@ coverage/
 !**/src/test/**/target/
 
 ### Temporary files and logs ###
+.omc/
 .tmp/
 tmp/
 temp/
