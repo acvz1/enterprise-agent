@@ -140,6 +140,30 @@ services:
     depends_on: [prometheus]
     networks: [agent-network]
 
+  namesrv:
+    image: apache/rocketmq:5.3.1
+    container_name: enterprise-agent-namesrv
+    restart: unless-stopped
+    ports:
+      - "${NAMESRV_PORT:-9876}:9876"
+    command: sh mqnamesrv
+    environment:
+      TZ: Asia/Shanghai
+    networks: [agent-network]
+
+  broker:
+    image: apache/rocketmq:5.3.1
+    container_name: enterprise-agent-broker
+    restart: unless-stopped
+    ports:
+      - "${BROKER_PORT:-10911}:10911"
+      - "10909:10909"
+    command: sh mqbroker -n namesrv:9876 autoCreateTopicEnable=true
+    environment:
+      TZ: Asia/Shanghai
+    depends_on: [namesrv]
+    networks: [agent-network]
+
 networks:
   agent-network:
 

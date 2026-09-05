@@ -1,6 +1,7 @@
 package com.kb.demo.service;
 
 import com.kb.demo.entity.UploadProgress;
+import com.kb.demo.mq.DocumentIngestionProducer;
 import com.kb.demo.repository.UploadProgressRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,13 +14,13 @@ import org.springframework.mock.web.MockMultipartFile;
 
 import java.nio.file.Path;
 import java.util.Optional;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -35,7 +36,7 @@ class DocumentProcessingServiceTest {
     private DocumentFileStorage documentFileStorage;
 
     @Mock
-    private DocumentProcessingWorker documentProcessingWorker;
+    private DocumentIngestionProducer documentIngestionProducer;
 
     @InjectMocks
     private DocumentProcessingService documentProcessingService;
@@ -55,14 +56,14 @@ class DocumentProcessingServiceTest {
     }
 
     @Test
-    void uploadFileAsyncStoresFileCreatesPendingJobAndDispatchesById() {
+    void uploadFileAsyncStoresFileCreatesPendingJobAndSendsToMq() {
         saveProgressSuccessfully();
 
         String uploadId = documentProcessingService.uploadFileAsync(mockFile);
 
         assertThat(uploadId).isNotBlank();
 
-        InOrder inOrder = inOrder(documentFileStorage, uploadProgressRepository, documentProcessingWorker);
+        InOrder inOrder = inOrder(documentFileStorage, uploadProgressRepository, documentIngestionProducer);
         inOrder.verify(documentFileStorage).store(uploadId, mockFile);
         inOrder.verify(uploadProgressRepository).save(argThat(progress ->
                 progress.getUploadId().equals(uploadId)
@@ -71,7 +72,7 @@ class DocumentProcessingServiceTest {
                         && progress.getUploadedSize().equals(mockFile.getSize())
                         && progress.getStatus() == UploadProgress.UploadStatus.PENDING
                         && progress.getPercentage() == 0));
-        inOrder.verify(documentProcessingWorker).processFileAsync(uploadId);
+        inOrder.verify(documentIngestionProducer).send(uploadId);
 
         verify(metricsService).recordDocumentUpload();
     }
@@ -84,8 +85,8 @@ class DocumentProcessingServiceTest {
         String secondUploadId = documentProcessingService.uploadFileAsync(mockFile);
 
         assertThat(firstUploadId).isNotEqualTo(secondUploadId);
-        verify(documentProcessingWorker).processFileAsync(firstUploadId);
-        verify(documentProcessingWorker).processFileAsync(secondUploadId);
+        verify(documentIngestionProducer).send(firstUploadId);
+        verify(documentIngestionProducer).send(secondUploadId);
     }
 
     @Test
@@ -98,11 +99,11 @@ class DocumentProcessingServiceTest {
                 .hasMessage("database unavailable");
 
         verify(documentFileStorage).delete(anyString(), eq("test-document.pdf"));
-        verifyNoInteractions(documentProcessingWorker);
+        verifyNoInteractions(documentIngestionProducer);
     }
 
     @Test
-    void uploadFileAsyncMarksJobFailedAndKeepsSourceWhenExecutorRejectsTask() {
+    void uploadFileAsyncMarksJobFailedAndKeepsSourceWhenMqSendFails() {
         AtomicReference<UploadProgress> savedProgress = new AtomicReference<>();
         when(uploadProgressRepository.save(any(UploadProgress.class))).thenAnswer(invocation -> {
             UploadProgress progress = invocation.getArgument(0);
@@ -111,12 +112,12 @@ class DocumentProcessingServiceTest {
         });
         when(uploadProgressRepository.findByUploadId(anyString()))
                 .thenAnswer(invocation -> Optional.ofNullable(savedProgress.get()));
-        doThrow(new RejectedExecutionException("queue full"))
-                .when(documentProcessingWorker).processFileAsync(anyString());
+        doThrow(new RuntimeException("broker unavailable"))
+                .when(documentIngestionProducer).send(anyString());
 
         assertThatThrownBy(() -> documentProcessingService.uploadFileAsync(mockFile))
-                .isInstanceOf(RejectedExecutionException.class)
-                .hasMessage("queue full");
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("broker unavailable");
 
         assertThat(savedProgress.get().getStatus()).isEqualTo(UploadProgress.UploadStatus.FAILED);
         assertThat(savedProgress.get().getErrorMessage()).isEqualTo("后台任务提交失败");

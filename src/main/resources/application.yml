@@ -45,6 +45,15 @@ spring:
   # Elasticsearch 配置
   elasticsearch:
     uris: ${ELASTICSEARCH_URIS:http://localhost:9200}
+
+  # RocketMQ 配置
+  rocketmq:
+    name-server: ${ROCKETMQ_NAMESRV:localhost:9876}
+    producer:
+      group: enterprise-agent-producer
+      send-message-timeout: 3000
+    consumer:
+      pull-batch-size: 32
   
   # MVC配置
   mvc:
@@ -63,6 +72,10 @@ spring:
 
 # 文档入库配置
 app:
+  mq:
+    ingestion-topic: document-ingestion
+    ingestion-consumer-group: document-ingestion-consumer
+    max-reconsume-times: 3
   ingestion:
     storage-dir: ${INGESTION_STORAGE_DIR:./data/ingestion}
   retrieval:

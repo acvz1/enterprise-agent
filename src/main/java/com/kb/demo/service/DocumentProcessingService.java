@@ -1,6 +1,7 @@
 package com.kb.demo.service;
 
 import com.kb.demo.entity.UploadProgress;
+import com.kb.demo.mq.DocumentIngestionProducer;
 import com.kb.demo.repository.UploadProgressRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,7 +17,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Accepts upload requests and hands durable ingestion jobs to the background worker.
+ * Accepts upload requests and publishes durable ingestion jobs to RocketMQ.
  */
 @Service
 public class DocumentProcessingService {
@@ -26,17 +27,17 @@ public class DocumentProcessingService {
     private final UploadProgressRepository uploadProgressRepository;
     private final MetricsService metricsService;
     private final DocumentFileStorage documentFileStorage;
-    private final DocumentProcessingWorker documentProcessingWorker;
+    private final DocumentIngestionProducer documentIngestionProducer;
 
     public DocumentProcessingService(
             UploadProgressRepository uploadProgressRepository,
             MetricsService metricsService,
             DocumentFileStorage documentFileStorage,
-            DocumentProcessingWorker documentProcessingWorker) {
+            DocumentIngestionProducer documentIngestionProducer) {
         this.uploadProgressRepository = uploadProgressRepository;
         this.metricsService = metricsService;
         this.documentFileStorage = documentFileStorage;
-        this.documentProcessingWorker = documentProcessingWorker;
+        this.documentIngestionProducer = documentIngestionProducer;
     }
 
     /**
@@ -67,7 +68,7 @@ public class DocumentProcessingService {
             progressSaved = true;
 
             metricsService.recordDocumentUpload();
-            documentProcessingWorker.processFileAsync(uploadId);
+            documentIngestionProducer.send(uploadId);
 
             logger.info(
                     "文档入库任务已受理: uploadId={}, fileName={}, storedFile={}",

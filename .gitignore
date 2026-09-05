@@ -10,6 +10,7 @@ coverage/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
+docs/
 
 ### Temporary files and logs ###
 .omc/
