@@ -158,9 +158,12 @@ services:
     ports:
       - "${BROKER_PORT:-10911}:10911"
       - "10909:10909"
-    command: sh mqbroker -n namesrv:9876 autoCreateTopicEnable=true
+    command: ["sh", "mqbroker", "-c", "/home/rocketmq/rocketmq-5.3.1/conf/broker.conf"]
     environment:
       TZ: Asia/Shanghai
+      JAVA_OPT_EXT: "-Drocketmq.namesrv.addr=namesrv:9876 -Drocketmq.broker.ip1=127.0.0.1"
+    volumes:
+      - ./broker.conf:/home/rocketmq/rocketmq-5.3.1/conf/broker.conf:ro
     depends_on: [namesrv]
     networks: [agent-network]
 

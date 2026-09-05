@@ -133,7 +133,6 @@ public class DocumentIngestionService {
         document.setTitle(parseResult.get("title"));
         document.setContent(parseResult.get("content"));
         document.setFileType(fileParseService.getFileTypeDescription(progress.getFileName()));
-        document.setFilePath(storedFile.toString());
 
         if (progress.getVisibleDepartmentIds() != null && !progress.getVisibleDepartmentIds().isBlank()) {
             departmentAccessService.applyBackgroundDocumentDepartments(
