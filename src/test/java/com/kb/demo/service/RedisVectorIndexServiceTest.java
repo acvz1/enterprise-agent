@@ -37,12 +37,15 @@ class RedisVectorIndexServiceTest {
     void registerEmbeddingRecordsIdByDocument() {
         service.registerEmbedding(7L, "embedding-id-1");
 
-        verify(setOperations).add("document-embeddings:document:7", "embedding-id-1");
+        verify(setOperations).add("document-embeddings:document:7:1", "embedding-id-1");
     }
 
     @Test
     void deleteByDocumentIdDeletesRegisteredEmbeddingKeysAndRegistry() {
-        when(setOperations.members("document-embeddings:document:7"))
+        String registryKey = "document-embeddings:document:7:1";
+        when(redisTemplate.keys("document-embeddings:document:7:*"))
+                .thenReturn(Set.of(registryKey));
+        when(setOperations.members(registryKey))
                 .thenReturn(Set.of("embedding-id-1", "embedding-id-2"));
         when(redisTemplate.delete(List.of("embedding:embedding-id-1", "embedding:embedding-id-2")))
                 .thenReturn(2L);
@@ -50,7 +53,7 @@ class RedisVectorIndexServiceTest {
         long deletedCount = service.deleteByDocumentId(7L);
 
         assertThat(deletedCount).isEqualTo(2L);
-        verify(redisTemplate).delete("document-embeddings:document:7");
+        verify(redisTemplate).delete(registryKey);
     }
 
     @Test

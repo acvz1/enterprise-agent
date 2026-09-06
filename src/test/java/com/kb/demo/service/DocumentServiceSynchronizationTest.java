@@ -47,7 +47,7 @@ class DocumentServiceSynchronizationTest {
 
         documentService.updateDocumentWithVersion(7L, update);
 
-        verify(documentChunkService).processDocument(7L);
+        verify(documentChunkService).processDocumentWithVersion(org.mockito.ArgumentMatchers.eq(7L), any());
     }
 
     @Test
@@ -58,7 +58,7 @@ class DocumentServiceSynchronizationTest {
 
         documentService.updateDocumentWithVersion(7L, update);
 
-        verify(documentChunkService, never()).processDocument(any());
+        verify(documentChunkService, never()).processDocumentWithVersion(any(), any());
     }
 
     @Test

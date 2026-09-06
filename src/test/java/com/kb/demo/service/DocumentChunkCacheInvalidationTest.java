@@ -38,7 +38,7 @@ class DocumentChunkCacheInvalidationTest {
         when(documentChunkRepository.countByDocumentId(7L)).thenReturn(0L);
         when(indexSyncTaskService.claim(7L)).thenReturn(Optional.of(
                 new DocumentIndexSyncTaskService.SyncAttempt(
-                        7L, DocumentIndexSyncTask.Operation.DELETE, 1L, "attempt-1")));
+                        7L, DocumentIndexSyncTask.Operation.DELETE, 1L, "attempt-1", null)));
         when(applicationContext.getBean(DocumentChunkService.class)).thenReturn(documentChunkService);
 
         documentChunkService.deleteChunksByDocumentId(7L);
@@ -58,7 +58,7 @@ class DocumentChunkCacheInvalidationTest {
         try {
             documentChunkService.deleteChunksByDocumentId(7L);
 
-            verify(indexSyncTaskService).request(7L, DocumentIndexSyncTask.Operation.DELETE);
+            verify(indexSyncTaskService).request(7L, DocumentIndexSyncTask.Operation.DELETE, null);
             verifyNoInteractions(redisVectorIndexService, elasticsearchSearchService, aiService);
         } finally {
             TransactionSynchronizationManager.clearSynchronization();

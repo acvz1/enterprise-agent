@@ -48,7 +48,7 @@ class DocumentVersioningTest {
 
         DocumentChunk v1Chunk = chunk(10L, 1L, "Doc", 0, "v1 content", 1);
         when(documentRepository.findActiveVersionsByIds(any()))
-                .thenReturn(List.of(row(1L, 1)));
+                .thenReturn(List.<Object[]>of(row(1L, 1)));
         when(chunkRepository.findCandidateChunksWithDocument(any(), any()))
                 .thenReturn(List.of(v1Chunk));
 
@@ -68,7 +68,7 @@ class DocumentVersioningTest {
         DocumentChunk v2Chunk = chunk(20L, 1L, "Doc", 0, "v2 content", 2);
         // activeVersion=1，尚未 CAS 切换
         when(documentRepository.findActiveVersionsByIds(any()))
-                .thenReturn(List.of(row(1L, 1)));
+                .thenReturn(List.<Object[]>of(row(1L, 1)));
         when(chunkRepository.findCandidateChunksWithDocument(any(), any()))
                 .thenReturn(List.of(v2Chunk));
 
@@ -87,7 +87,7 @@ class DocumentVersioningTest {
         DocumentChunk v2Chunk = chunk(20L, 1L, "Doc", 0, "v2 content", 2);
         // activeVersion 已切换为 2
         when(documentRepository.findActiveVersionsByIds(any()))
-                .thenReturn(List.of(row(1L, 2)));
+                .thenReturn(List.<Object[]>of(row(1L, 2)));
         when(chunkRepository.findCandidateChunksWithDocument(any(), any()))
                 .thenReturn(List.of(v2Chunk));
 
@@ -106,7 +106,7 @@ class DocumentVersioningTest {
 
         DocumentChunk v1Chunk = chunk(10L, 1L, "Doc", 0, "v1 content", 1);
         when(documentRepository.findActiveVersionsByIds(any()))
-                .thenReturn(List.of(row(1L, 2)));
+                .thenReturn(List.<Object[]>of(row(1L, 2)));
         when(chunkRepository.findCandidateChunksWithDocument(any(), any()))
                 .thenReturn(List.of(v1Chunk));
 
@@ -126,7 +126,7 @@ class DocumentVersioningTest {
         DocumentChunk chunkA = chunk(10L, 1L, "A", 0, "a content", 2);
         DocumentChunk chunkB = chunk(20L, 2L, "B", 0, "b content", 1);
         when(documentRepository.findActiveVersionsByIds(any()))
-                .thenReturn(List.of(row(1L, 2), row(2L, 1)));
+                .thenReturn(List.<Object[]>of(row(1L, 2), row(2L, 1)));
         when(chunkRepository.findCandidateChunksWithDocument(any(), any()))
                 .thenReturn(List.of(chunkA, chunkB));
 
@@ -151,7 +151,7 @@ class DocumentVersioningTest {
         // no chunk for doc 2 chunkIndex 0 → cross filtered
 
         when(documentRepository.findActiveVersionsByIds(any()))
-                .thenReturn(List.of(row(1L, 1), row(2L, 1)));
+                .thenReturn(List.<Object[]>of(row(1L, 1), row(2L, 1)));
         when(chunkRepository.findCandidateChunksWithDocument(any(), any()))
                 .thenReturn(List.of(v2Chunk, v1Chunk));
 
@@ -220,7 +220,7 @@ class DocumentVersioningTest {
 
         DocumentChunk nullVersionChunk = chunk(10L, 1L, "Doc", 0, "content", null);
         when(documentRepository.findActiveVersionsByIds(any()))
-                .thenReturn(List.of(row(1L, 1)));
+                .thenReturn(List.<Object[]>of(row(1L, 1)));
         when(chunkRepository.findCandidateChunksWithDocument(any(), any()))
                 .thenReturn(List.of(nullVersionChunk));
 

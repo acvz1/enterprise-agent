@@ -63,6 +63,9 @@ public class DocumentChunkService {
     private DocumentIndexSyncTaskService indexSyncTaskService;
 
     @Autowired
+    private RetrievalGenerationService retrievalGenerationService;
+
+    @Autowired
     private EmbeddingModel embeddingModel;
 
     @Autowired
@@ -234,6 +237,7 @@ public class DocumentChunkService {
             }
 
             // --- E. 失效答案缓存 ---
+            retrievalGenerationService.incrementGeneration();
             aiService.invalidateAnswersByDocumentId(documentId);
             logger.info("[DocumentChunk] version switch done, documentId={}, activeVersion={}->{}", documentId, activeVersion, tv);
 

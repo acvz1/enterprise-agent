@@ -28,6 +28,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -75,9 +77,18 @@ class ChunkOverlapEvaluationIT {
         DepartmentAccessService departmentAccessService = mock(DepartmentAccessService.class);
         when(departmentAccessService.currentScope())
                 .thenReturn(new DepartmentAccessService.AccessScope(true, Set.of()));
+        when(departmentAccessService.currentScopeCacheKey()).thenReturn("global");
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        RetrievalHitsCache hitsCache = new RetrievalHitsCache(
+                mock(org.springframework.data.redis.core.RedisTemplate.class),
+                new ObjectMapper(), meterRegistry);
+        RetrievalGenerationService generationService = mock(RetrievalGenerationService.class);
+        when(generationService.currentGeneration()).thenReturn("0");
         hybridRetrievalService = new HybridRetrievalService(
                 vectorSearchService, elasticsearchSearchService, new RrfFusionService(),
-                mock(RetrievalResultService.class), departmentAccessService);
+                mock(RetrievalResultService.class), departmentAccessService,
+                hitsCache, new RetrievalSingleFlight(meterRegistry),
+                generationService, meterRegistry);
         deleteEvaluationData();
     }
 
@@ -173,7 +184,7 @@ class ChunkOverlapEvaluationIT {
                 TextSegment indexedSegment = TextSegment.from(segment.text(), metadata);
                 redisEmbeddingStore.add(embeddingModel.embed(indexedSegment.text()).content(), indexedSegment);
                 elasticsearchDocuments.add(new ElasticsearchChunkDocument(
-                        document.getKey(), index, indexedSegment.text()));
+                        document.getKey(), index, indexedSegment.text(), null));
                 chunkContentByKey.put(chunkKey(document.getKey(), index), indexedSegment.text());
             }
         }

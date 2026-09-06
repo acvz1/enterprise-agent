@@ -10,6 +10,7 @@
 - 使用 BGE-small-zh-v1.5 生成 Embedding，Redis Stack 负责语义召回。
 - Elasticsearch 使用 BM25 召回关键词匹配的 chunk。
 - 两路结果统一为 `RetrievalCandidate`，使用 RRF 按排名融合并去重。
+- RRF 输出经 Retrieval Hits Cache（Redis，TTL 30s）缓存 candidate identity（docId / chunkIndex / rank），相同 query 在 cache 有效期内跳过 Vector + BM25 + RRF 直接回表。Cache miss 时由 Single-flight（JVM 内 `ConcurrentHashMap + CompletableFuture`）保护，100 个同 query 并发冷 miss 时 retrieval 只执行 1 次。文档 `activeVersion` CAS 切换成功后，Redis 中的 `retrieval:generation` 原子 +1，使旧 Hits Cache 自动失效，key 格式：`retrieval:{generation}:{scopeKey}:{queryHash}`。
 - RRF Top K 确定后，通过 MySQL JOIN 批量补全权威 chunk、文档标题、权限与版本信息。
 - 使用 JWT、`qa:ask`、`document:read` 和 Department ACL 实现功能权限与部门数据权限隔离。
 - 文档更新采用 BUILD → VALIDATE → SWITCH → GC 版本化构建：新版本在 MySQL、Redis、ES 三侧全部构建并校验后，通过 CAS 原子切换 `activeVersion`，失败时旧版本继续服务。
@@ -255,6 +256,9 @@ ADD COLUMN target_version INT;
 | 知识库工具与读取权限 | `KnowledgeBaseTool.searchKnowledgeBase()` |
 | 部门权限 | `DepartmentAccessService` |
 | 双路检索 | `HybridRetrievalService.searchHits()` |
+| Retrieval Hits Cache | `RetrievalHitsCache` |
+| Retrieval Single-flight | `RetrievalSingleFlight` |
+| Retrieval Generation 计数器 | `RetrievalGenerationService` |
 | Vector Search | `VectorSearchService` |
 | BM25 Search | `ElasticsearchSearchService` |
 | RRF | `RrfFusionService.fuse()` |
@@ -278,4 +282,5 @@ ADD COLUMN target_version INT;
 - 尚未实现 Reranker、Query Rewrite 和 Intent Clarification。
 - 文档版本化更新消除了原来的 DELETE OLD → REBUILD IN PLACE 空洞，但全量 `rebuildAllVectorIndex` 仍属于原有全量重建路径。
 - Redis / Elasticsearch 属于最终一致性的可重建索引，不使用 2PC / XA 分布式事务。
+- Single-flight 去重当前仅在单 JVM 内有效；多实例部署时同一 query 可能在不同节点各执行一次 retrieval，不影响正确性，仅影响并发保护效果。
 - 不包含 MCP、多 Agent 等能力，这些位于独立 Coding Agent Harness 项目中。

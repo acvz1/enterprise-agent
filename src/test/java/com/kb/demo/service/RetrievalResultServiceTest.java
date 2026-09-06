@@ -49,7 +49,7 @@ class RetrievalResultServiceTest {
 
         // activeVersion for all docs = 1
         when(documentRepository.findActiveVersionsByIds(any()))
-                .thenReturn(List.of(new Object[]{1L, 1}, new Object[]{2L, 1}, new Object[]{3L, 1}));
+                .thenReturn(List.<Object[]>of(new Object[]{1L, 1}, new Object[]{2L, 1}, new Object[]{3L, 1}));
 
         Set<Long> documentIds = Set.of(1L, 2L, 3L);
         Set<Integer> chunkIndexes = Set.of(0, 1, 9);
@@ -87,7 +87,7 @@ class RetrievalResultServiceTest {
         DocumentChunk v1Chunk = chunk(11L, 1L, "Doc", 1, "v1 content", 1);
 
         when(documentRepository.findActiveVersionsByIds(any()))
-                .thenReturn(List.of(new Object[]{1L, 1}));
+                .thenReturn(List.<Object[]>of(new Object[]{1L, 1}));
         when(documentChunkRepository.findCandidateChunksWithDocument(any(), any()))
                 .thenReturn(List.of(v2Chunk, v1Chunk));
 

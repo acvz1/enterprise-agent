@@ -24,7 +24,7 @@ class DocumentIndexSyncTaskServiceTest {
         when(taskRepository.findByDocumentId(7L)).thenReturn(Optional.of(task));
         DocumentIndexSyncTaskService service = new DocumentIndexSyncTaskService(taskRepository, 5, 300, 300);
 
-        service.request(7L, DocumentIndexSyncTask.Operation.REBUILD);
+        service.request(7L, DocumentIndexSyncTask.Operation.REBUILD, null);
         DocumentIndexSyncTaskService.SyncAttempt attempt = service.claim(7L).orElseThrow();
         service.markFailure(attempt, new IllegalStateException("Elasticsearch 不可用"));
 
@@ -42,7 +42,7 @@ class DocumentIndexSyncTaskServiceTest {
         DocumentIndexSyncTaskService service = new DocumentIndexSyncTaskService(taskRepository, 5, 300, 300);
 
         DocumentIndexSyncTaskService.SyncAttempt oldAttempt = service.claim(7L).orElseThrow();
-        service.request(7L, DocumentIndexSyncTask.Operation.REBUILD);
+        service.request(7L, DocumentIndexSyncTask.Operation.REBUILD, null);
         service.markSuccess(oldAttempt);
 
         assertThat(task.getStatus()).isEqualTo(DocumentIndexSyncTask.Status.PENDING);

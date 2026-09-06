@@ -27,6 +27,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -124,12 +127,23 @@ class HybridRetrievalServiceIT {
         DepartmentAccessService departmentAccessService = mock(DepartmentAccessService.class);
         when(departmentAccessService.currentScope())
                 .thenReturn(new DepartmentAccessService.AccessScope(true, Set.of()));
+        when(departmentAccessService.currentScopeCacheKey()).thenReturn("global");
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        RetrievalHitsCache hitsCache = new RetrievalHitsCache(
+                mock(org.springframework.data.redis.core.RedisTemplate.class),
+                new ObjectMapper(), meterRegistry);
+        RetrievalGenerationService generationService = mock(RetrievalGenerationService.class);
+        when(generationService.currentGeneration()).thenReturn("0");
         HybridRetrievalService service = new HybridRetrievalService(
                 vectorSearchService,
                 elasticsearchSearchService,
                 new RrfFusionService(),
                 mock(RetrievalResultService.class),
-                departmentAccessService
+                departmentAccessService,
+                hitsCache,
+                new RetrievalSingleFlight(meterRegistry),
+                generationService,
+                meterRegistry
         );
 
         List<FusedRetrievalCandidate> result =

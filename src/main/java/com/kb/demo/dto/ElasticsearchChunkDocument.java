@@ -14,6 +14,10 @@ public class ElasticsearchChunkDocument {
         this.documentVersion = documentVersion;
     }
 
+    public ElasticsearchChunkDocument(Long documentId, Integer chunkIndex, String content) {
+        this(documentId, chunkIndex, content, null);
+    }
+
     public ElasticsearchChunkDocument() {
     }
 
