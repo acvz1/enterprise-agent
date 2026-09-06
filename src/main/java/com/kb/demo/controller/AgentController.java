@@ -1,6 +1,8 @@
 package com.kb.demo.controller;
 
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -22,7 +24,7 @@ public class AgentController {
         this.knowledgeAgentService = knowledgeAgentService;
         this.modelConfig = modelConfig;
     }
-    
+
     @PostMapping("/ask")
     @PreAuthorize("hasAuthority('qa:ask')")
     public AgentResponse ask(@RequestBody Map<String, String> request) {
@@ -33,6 +35,21 @@ public class AgentController {
             modelName = modelConfig.getDefaultModel();
         }
 
-        return knowledgeAgentService.ask(question, modelName);
+        return knowledgeAgentService.ask(question, modelName, scopedSessionId(request.get("sessionId")));
+    }
+
+    /**
+     * 将客户端会话 ID 限定在当前登录用户命名空间内，避免不同账号共享检索上下文。
+     */
+    private String scopedSessionId(String clientSessionId) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new IllegalStateException("无法确定当前登录用户");
+        }
+
+        String normalizedSessionId = clientSessionId == null || clientSessionId.isBlank()
+                ? "default"
+                : clientSessionId;
+        return authentication.getName() + ":" + normalizedSessionId;
     }
 }

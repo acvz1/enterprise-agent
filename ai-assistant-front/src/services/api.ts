@@ -55,10 +55,13 @@ api.interceptors.response.use(
 // AI问答相关API
 export const aiApi = {
   // Agent 问答：返回工具调用信息与可追溯引用
-  askAgent: (question: string, model?: string) => {
-    const payload: { question: string; model?: string } = { question };
+  askAgent: (question: string, model?: string, sessionId?: string) => {
+    const payload: { question: string; model?: string; sessionId?: string } = { question };
     if (model) {
       payload.model = model;
+    }
+    if (sessionId) {
+      payload.sessionId = sessionId;
     }
     return api.post('/ai/agent/ask', payload);
   },

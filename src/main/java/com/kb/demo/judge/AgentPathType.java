@@ -10,5 +10,7 @@ public enum AgentPathType {
     /** Judge 判定为 UNCERTAIN，强制检索后生成答案 */
     JUDGE_UNCERTAIN_FORCED_RETRIEVAL,
     /** Judge 执行失败，fail-safe：强制检索后生成答案 */
-    JUDGE_FAILURE
+    JUDGE_FAILURE,
+    /** 短 Query 缺上下文或检索结果歧义，返回澄清问题而非猜测答案 */
+    CLARIFICATION
 }

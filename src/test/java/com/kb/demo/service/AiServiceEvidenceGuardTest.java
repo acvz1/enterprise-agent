@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -19,13 +21,21 @@ class AiServiceEvidenceGuardTest {
         ModelFactory modelFactory = mock(ModelFactory.class);
         HybridRetrievalService hybridRetrievalService = mock(HybridRetrievalService.class);
         DepartmentAccessService departmentAccessService = mock(DepartmentAccessService.class);
+        ChatMemoryStore chatMemoryStore = mock(ChatMemoryStore.class);
+        ContextQueryEnhancer contextQueryEnhancer = mock(ContextQueryEnhancer.class);
+        AmbiguityDetectionService ambiguityDetectionService = mock(AmbiguityDetectionService.class);
+        RetrievalContextStore retrievalContextStore = mock(RetrievalContextStore.class);
         when(hybridRetrievalService.searchHits("报销流程", 10, 5)).thenReturn(List.of());
         when(departmentAccessService.currentScopeCacheKey()).thenReturn("dept-10");
+        when(retrievalContextStore.current(anyString())).thenReturn(null);
+        when(contextQueryEnhancer.enhance(anyString(), any()))
+                .thenReturn(ContextQueryEnhancer.Enhancement.none());
 
         AiService service = new AiService(
                 modelFactory, mock(ModelConfig.class), mock(RedisTemplate.class), hybridRetrievalService,
-                mock(ChatMemoryStore.class), mock(ResponseEvaluationService.class), mock(AnalyticsService.class),
-                departmentAccessService);
+                chatMemoryStore, mock(ResponseEvaluationService.class), mock(AnalyticsService.class),
+                departmentAccessService, ambiguityDetectionService, contextQueryEnhancer,
+                retrievalContextStore);
 
         Map<String, Object> result = service.askQuestion("报销流程", "alice:default", "deepseek");
 

@@ -41,6 +41,9 @@ public class AiService {
     private final ResponseEvaluationService responseEvaluationService;
     private final AnalyticsService analyticsService;
     private final DepartmentAccessService departmentAccessService;
+    private final AmbiguityDetectionService ambiguityDetectionService;
+    private final ContextQueryEnhancer contextQueryEnhancer;
+    private final RetrievalContextStore retrievalContextStore;
 
     private static final String NO_ACCESSIBLE_EVIDENCE = "未找到当前账号可访问的知识库内容，无法基于证据回答该问题。";
     private static final long ANSWER_CACHE_TTL_MINUTES = 5L;
@@ -54,7 +57,10 @@ public class AiService {
             ChatMemoryStore chatMemoryStore,
             ResponseEvaluationService responseEvaluationService,
             AnalyticsService analyticsService,
-            DepartmentAccessService departmentAccessService) {
+            DepartmentAccessService departmentAccessService,
+            AmbiguityDetectionService ambiguityDetectionService,
+            ContextQueryEnhancer contextQueryEnhancer,
+            RetrievalContextStore retrievalContextStore) {
         this.modelFactory = modelFactory;
         this.modelConfig = modelConfig;
         this.redisTemplate = redisTemplate;
@@ -63,6 +69,9 @@ public class AiService {
         this.responseEvaluationService = responseEvaluationService;
         this.analyticsService = analyticsService;
         this.departmentAccessService = departmentAccessService;
+        this.ambiguityDetectionService = ambiguityDetectionService;
+        this.contextQueryEnhancer = contextQueryEnhancer;
+        this.retrievalContextStore = retrievalContextStore;
     }
 
     public Map<String, Object> askQuestion(String question, String sessionId) {
@@ -70,13 +79,23 @@ public class AiService {
     }
     
     public Map<String, Object> askQuestion(String question, String sessionId, String modelName) {
+        // 1) 短 Query / 上下文依赖：先增强检索 query（原始 question 保留给回答生成）
+        ContextQueryEnhancer.Enhancement enhancement =
+                contextQueryEnhancer.enhance(question, retrievalContextStore.current(sessionId));
+        if (enhancement.clarify()) {
+            return Map.of("answer", ContextQueryEnhancer.CLARIFY_MESSAGE, "fromCache", false,
+                    "model", modelName, "citations", List.of());
+        }
+        String retrievalQuery = enhancement.retrievalQuery() != null
+                ? enhancement.retrievalQuery() : question;
+
         // 生成缓存键
         String cacheKey = answerCacheKey(sessionId, question, modelName);
-        
-        // 使用混合检索获取RRF TopK分块
+
+        // 使用混合检索获取RRF TopK分块（使用增强后的 retrieval query）
         List<RetrievalHit> relevantHits;
         try{
-            relevantHits=hybridRetrievalService.searchHits(question, 10, 5);
+            relevantHits=hybridRetrievalService.searchHits(retrievalQuery, 10, 5);
         }catch(IOException e){
             throw new IllegalStateException("混合检索失败",e);
         }
@@ -86,33 +105,43 @@ public class AiService {
                     "model", modelName, "citations", List.of());
         }
 
+        // 记录最近一次成功检索 query，供后续短 Query 补全上下文
+        retrievalContextStore.record(sessionId, retrievalQuery);
+
+        // 2) 歧义检测：TopK 命中多个主题且分数接近 → 返回澄清，不猜答案
+        var clarification = ambiguityDetectionService.detectClarification(relevantHits);
+        if (clarification.isPresent()) {
+            return Map.of("answer", clarification.get(), "fromCache", false,
+                    "model", modelName, "citations", List.of());
+        }
+
         // 尝试从缓存获取答案
         String cachedAnswer = redisTemplate.opsForValue().get(cacheKey);
         if (cachedAnswer != null) {
             return Map.of("answer", cachedAnswer, "fromCache", true, "model", modelName,"citations",relevantHits);
         }
-    
-        
+
+
         // 构建上下文
         String context = relevantHits.stream()
         .map(hit -> "标题: " + hit.getDocumentTitle()
                 + "\n分块: " + hit.getChunkIndex()
                 + "\n内容: " + hit.getContent())
         .collect(Collectors.joining("\n\n"));
-        
-        // 构建提示词
+
+        // 构建提示词（使用原始 question）
         String prompt = "请仅根据以下知识库内容回答问题。若证据不足，请明确说明知识库中没有足够信息，不要使用模型自身知识补充事实。\n\n" +
                 "知识库内容:\n" + context + "\n\n" +
                 "问题: " + question;
-        
+
         // 获取指定模型
         ChatLanguageModel model = modelFactory.createModel(modelName);
-        
+
         // 调用模型生成答案
         String answer = model.generate(prompt);
-        
+
         cacheAnswer(cacheKey, answer, relevantHits);
-        
+
         return Map.of("answer", answer, "fromCache", false, "model", modelName,"citations",relevantHits);
     }
 
@@ -122,13 +151,26 @@ public class AiService {
     
     public void askQuestionStream(String question, String sessionId, SseEmitter emitter, String modelName) throws IOException {
         logger.info("开始处理流式请求 - 问题: {}, 会话ID: {}, 模型: {}", question, sessionId, modelName);
-        
+
         // 生成缓存键
         String cacheKey = answerCacheKey(sessionId, question, modelName);
         logger.debug("缓存键: {}", cacheKey);
 
-        // 使用混合检索获取RRF TopK分块
-        List<RetrievalHit> relevantHits =hybridRetrievalService.searchHits(question, 10, 5);
+        // 1) 短 Query / 上下文依赖：先增强检索 query（原始 question 保留给回答生成）
+        ContextQueryEnhancer.Enhancement enhancement =
+                contextQueryEnhancer.enhance(question, retrievalContextStore.current(sessionId));
+        if (enhancement.clarify()) {
+            emitter.send(SseEmitter.event().name("message").data(ContextQueryEnhancer.CLARIFY_MESSAGE));
+            emitter.send(SseEmitter.event().name("metadata")
+                    .data(Map.of("fromCache", false, "model", modelName, "citations", List.of())));
+            emitter.complete();
+            return;
+        }
+        String retrievalQuery = enhancement.retrievalQuery() != null
+                ? enhancement.retrievalQuery() : question;
+
+        // 使用混合检索获取RRF TopK分块（使用增强后的 retrieval query）
+        List<RetrievalHit> relevantHits =hybridRetrievalService.searchHits(retrievalQuery, 10, 5);
 
         if (relevantHits.isEmpty()) {
             emitter.send(SseEmitter.event().name("message").data(NO_ACCESSIBLE_EVIDENCE));
@@ -137,7 +179,20 @@ public class AiService {
             emitter.complete();
             return;
         }
-        
+
+        // 记录最近一次成功检索 query，供后续短 Query 补全上下文
+        retrievalContextStore.record(sessionId, retrievalQuery);
+
+        // 2) 歧义检测：TopK 命中多个主题且分数接近 → 返回澄清，不猜答案
+        var clarification = ambiguityDetectionService.detectClarification(relevantHits);
+        if (clarification.isPresent()) {
+            emitter.send(SseEmitter.event().name("message").data(clarification.get()));
+            emitter.send(SseEmitter.event().name("metadata")
+                    .data(Map.of("fromCache", false, "model", modelName, "citations", List.of())));
+            emitter.complete();
+            return;
+        }
+
         // 尝试从缓存获取答案
         String cachedAnswer = redisTemplate.opsForValue().get(cacheKey);
         if (cachedAnswer != null) {
@@ -171,12 +226,9 @@ public class AiService {
         if (relevantHits.isEmpty()) {
             logger.info("混合检索没有找到相关分块，使用空知识库模式回答");
         }
-        
-        // 获取会话的最近对话历史（最近3轮）
-        List<SessionMessage> recentHistory = chatMemoryStore.getRecentContext(sessionId);
-        logger.info("从会话记忆获取到 {} 条消息", recentHistory.size());
-        
+
         // 构建增强的提示词（包含对话历史）
+        List<SessionMessage> recentHistory = chatMemoryStore.getRecentContext(sessionId);
         String prompt = buildEnhancedPrompt(question, recentHistory, relevantHits);
         logger.debug("构建的提示词: {}", prompt);
         

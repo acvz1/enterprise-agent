@@ -63,6 +63,11 @@ const messages = ref<ChatMessage[]>([
   }
 ])
 
+// 会话级 ID：每个聊天会话生成一次并持续复用，用于后端按「用户 + 会话」隔离检索上下文。
+const sessionId = ref(
+  `agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+)
+
 const promptSuggestions = [
   '员工申请购买固定资产需要经过哪些审批？',
   '工业通讯设备的保修期是多久？',
@@ -132,7 +137,8 @@ const sendMessage = async (preset?: string) => {
   try {
     const response = (await aiApi.askAgent(
       question,
-      selectedModel.value
+      selectedModel.value,
+      sessionId.value
     )) as unknown as AgentResponse
     assistantMessage.content = response.answer
     assistantMessage.response = {

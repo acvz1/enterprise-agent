@@ -38,15 +38,24 @@ public class KnowledgeAgentService {
     private final ModelFactory modelFactory;
     private final KnowledgeBaseTool knowledgeBaseTool;
     private final DraftJudgeService draftJudgeService;
+    private final AmbiguityDetectionService ambiguityDetectionService;
+    private final ContextQueryEnhancer contextQueryEnhancer;
+    private final RetrievalContextStore retrievalContextStore;
     private final ObjectMapper objectMapper;
 
     public KnowledgeAgentService(ModelFactory modelFactory,
                                  KnowledgeBaseTool knowledgeBaseTool,
                                  DraftJudgeService draftJudgeService,
+                                 AmbiguityDetectionService ambiguityDetectionService,
+                                 ContextQueryEnhancer contextQueryEnhancer,
+                                 RetrievalContextStore retrievalContextStore,
                                  ObjectMapper objectMapper) {
         this.modelFactory = modelFactory;
         this.knowledgeBaseTool = knowledgeBaseTool;
         this.draftJudgeService = draftJudgeService;
+        this.ambiguityDetectionService = ambiguityDetectionService;
+        this.contextQueryEnhancer = contextQueryEnhancer;
+        this.retrievalContextStore = retrievalContextStore;
         this.objectMapper = objectMapper;
     }
 
@@ -57,7 +66,7 @@ public class KnowledgeAgentService {
                 .build();
     }
 
-    public AgentResponse ask(String question, String modelName) {
+    public AgentResponse ask(String question, String modelName, String sessionId) {
         ChatLanguageModel model = modelFactory.createModel(modelName);
 
         KnowledgeAgent agent = buildAgent(model);
@@ -70,19 +79,29 @@ public class KnowledgeAgentService {
         boolean searchedKnowledgeBase = toolNames.contains("searchKnowledgeBase");
 
         if (searchedKnowledgeBase) {
-            String answer = citations.isEmpty() ? NO_ACCESSIBLE_EVIDENCE : result.content();
-            return new AgentResponse(answer, modelName, true, toolNames, citations,
+            if (citations.isEmpty()) {
+                return new AgentResponse(NO_ACCESSIBLE_EVIDENCE, modelName, true, toolNames,
+                        citations, AgentPathType.AGENT_TOOL_USED);
+            }
+            // 歧义检测：Agent 检索结果命中多个主题且分数接近 → 返回澄清，不猜答案
+            var clarification = ambiguityDetectionService.detectClarification(citations);
+            if (clarification.isPresent()) {
+                return new AgentResponse(clarification.get(), modelName, true, toolNames,
+                        List.of(), AgentPathType.CLARIFICATION);
+            }
+            retrievalContextStore.record(sessionId, question);
+            return new AgentResponse(result.content(), modelName, true, toolNames, citations,
                     AgentPathType.AGENT_TOOL_USED);
         }
 
-        return applyJudge(question, modelName, model, result.content(), toolNames);
+        return applyJudge(question, modelName, model, result.content(), toolNames, sessionId);
     }
 
     // -----------------------------------------------------------------
 
     private AgentResponse applyJudge(String question, String modelName,
                                      ChatLanguageModel model,
-                                     String draft, List<String> toolNames) {
+                                     String draft, List<String> toolNames, String sessionId) {
         JudgeVerdict verdict;
         try {
             verdict = draftJudgeService.judge(model, question);
@@ -90,7 +109,7 @@ public class KnowledgeAgentService {
         } catch (Exception e) {
             log.warn("Judge failed for [{}], applying fail-safe forced retrieval", question, e);
             return forcedRetrievalResponse(question, modelName, model, toolNames,
-                    AgentPathType.JUDGE_FAILURE);
+                    AgentPathType.JUDGE_FAILURE, sessionId);
         }
 
         switch (verdict) {
@@ -99,23 +118,42 @@ public class KnowledgeAgentService {
                         List.of(), AgentPathType.JUDGE_SAFE_GENERAL);
             case REQUIRES_KB:
                 return forcedRetrievalResponse(question, modelName, model, toolNames,
-                        AgentPathType.JUDGE_FORCED_RETRIEVAL);
+                        AgentPathType.JUDGE_FORCED_RETRIEVAL, sessionId);
             case UNCERTAIN:
             default:
                 return forcedRetrievalResponse(question, modelName, model, toolNames,
-                        AgentPathType.JUDGE_UNCERTAIN_FORCED_RETRIEVAL);
+                        AgentPathType.JUDGE_UNCERTAIN_FORCED_RETRIEVAL, sessionId);
         }
     }
 
     private AgentResponse forcedRetrievalResponse(String question, String modelName,
                                                    ChatLanguageModel model,
                                                    List<String> originalToolNames,
-                                                   AgentPathType pathType) {
-        List<RetrievalHit> hits = knowledgeBaseTool.searchKnowledgeBase(question);
+                                                   AgentPathType pathType, String sessionId) {
+        // 短 Query / 上下文依赖：用最近一次成功检索 query 增强检索 query（原始 question 保留给回答生成）
+        ContextQueryEnhancer.Enhancement enhancement =
+                contextQueryEnhancer.enhance(question, retrievalContextStore.current(sessionId));
+        if (enhancement.clarify()) {
+            return new AgentResponse(ContextQueryEnhancer.CLARIFY_MESSAGE, modelName, false,
+                    originalToolNames, List.of(), AgentPathType.CLARIFICATION);
+        }
+        String retrievalQuery = enhancement.retrievalQuery() != null
+                ? enhancement.retrievalQuery() : question;
+
+        List<RetrievalHit> hits = knowledgeBaseTool.searchKnowledgeBase(retrievalQuery);
         if (hits.isEmpty()) {
             return new AgentResponse(NO_ACCESSIBLE_EVIDENCE, modelName, false,
                     originalToolNames, List.of(), pathType);
         }
+
+        // 歧义检测：强制检索命中多个主题且分数接近 → 返回澄清，不猜答案
+        var clarification = ambiguityDetectionService.detectClarification(hits);
+        if (clarification.isPresent()) {
+            return new AgentResponse(clarification.get(), modelName, false,
+                    originalToolNames, List.of(), AgentPathType.CLARIFICATION);
+        }
+
+        retrievalContextStore.record(sessionId, retrievalQuery);
         String context = hits.stream()
                 .map(h -> "标题: " + h.getDocumentTitle()
                         + "\n分块: " + h.getChunkIndex()

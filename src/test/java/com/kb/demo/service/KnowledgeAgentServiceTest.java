@@ -33,6 +33,9 @@ class KnowledgeAgentServiceTest {
 
     @Mock KnowledgeBaseTool knowledgeBaseTool;
     @Mock DraftJudgeService draftJudgeService;
+    @Mock AmbiguityDetectionService ambiguityDetectionService;
+    @Mock ContextQueryEnhancer contextQueryEnhancer;
+    @Mock RetrievalContextStore retrievalContextStore;
     @Mock ChatLanguageModel model;
     @Mock KnowledgeAgent agent;
     @Mock ModelFactory modelFactory;
@@ -43,7 +46,8 @@ class KnowledgeAgentServiceTest {
     /** Subclass that bypasses AiServices.builder to return the mock agent. */
     private class TestableService extends KnowledgeAgentService {
         TestableService() {
-            super(modelFactory, knowledgeBaseTool, draftJudgeService, objectMapper);
+            super(modelFactory, knowledgeBaseTool, draftJudgeService, ambiguityDetectionService,
+                    contextQueryEnhancer, retrievalContextStore, objectMapper);
         }
         @Override
         protected KnowledgeAgent buildAgent(ChatLanguageModel m) {
@@ -58,6 +62,10 @@ class KnowledgeAgentServiceTest {
         service = new TestableService();
         when(modelFactory.createModel(anyString())).thenReturn(model);
         when(agent.chat(anyString())).thenReturn(agentResult);
+        when(ambiguityDetectionService.detectClarification(any())).thenReturn(java.util.Optional.empty());
+        when(contextQueryEnhancer.enhance(anyString(), any()))
+                .thenReturn(ContextQueryEnhancer.Enhancement.none());
+        when(retrievalContextStore.current(any())).thenReturn(null);
     }
 
     // -----------------------------------------------------------------------
@@ -70,7 +78,7 @@ class KnowledgeAgentServiceTest {
         stubAgentResult("年假需提前3个工作日申请。",
                 List.of(toolExec("searchKnowledgeBase", "q", hitsJson)));
 
-        AgentResponse response = service.ask("年假要提前几天申请？", "qwen");
+        AgentResponse response = service.ask("年假要提前几天申请？", "qwen", "u:1");
 
         assertThat(response.getPathType()).isEqualTo(AgentPathType.AGENT_TOOL_USED);
         assertThat(response.isToolUsed()).isTrue();
@@ -87,7 +95,7 @@ class KnowledgeAgentServiceTest {
         stubAgentResult("（模型裸回答）",
                 List.of(toolExec("searchKnowledgeBase", "q", "[]")));
 
-        AgentResponse response = service.ask("年假要提前几天申请？", "qwen");
+        AgentResponse response = service.ask("年假要提前几天申请？", "qwen", "u:1");
 
         assertThat(response.getPathType()).isEqualTo(AgentPathType.AGENT_TOOL_USED);
         assertThat(response.getAnswer()).isEqualTo(KnowledgeAgentService.NO_ACCESSIBLE_EVIDENCE);
@@ -102,7 +110,7 @@ class KnowledgeAgentServiceTest {
         stubAgentResult("你好！", List.of());
         when(draftJudgeService.judge(model, "你好")).thenReturn(JudgeVerdict.SAFE_GENERAL);
 
-        AgentResponse response = service.ask("你好", "qwen");
+        AgentResponse response = service.ask("你好", "qwen", "u:1");
 
         assertThat(response.getPathType()).isEqualTo(AgentPathType.JUDGE_SAFE_GENERAL);
         assertThat(response.getAnswer()).isEqualTo("你好！");
@@ -121,7 +129,7 @@ class KnowledgeAgentServiceTest {
                 .thenReturn(List.of(hit(1L, 0, "年假政策", "年假5天")));
         when(model.generate(anyString())).thenReturn("年假5天。");
 
-        AgentResponse response = service.ask("年假几天", "qwen");
+        AgentResponse response = service.ask("年假几天", "qwen", "u:1");
 
         assertThat(response.getPathType()).isEqualTo(AgentPathType.JUDGE_FORCED_RETRIEVAL);
         assertThat(response.getCitations()).hasSize(1);
@@ -138,7 +146,7 @@ class KnowledgeAgentServiceTest {
         when(draftJudgeService.judge(model, "年假几天")).thenReturn(JudgeVerdict.REQUIRES_KB);
         when(knowledgeBaseTool.searchKnowledgeBase("年假几天")).thenReturn(List.of());
 
-        AgentResponse response = service.ask("年假几天", "qwen");
+        AgentResponse response = service.ask("年假几天", "qwen", "u:1");
 
         assertThat(response.getPathType()).isEqualTo(AgentPathType.JUDGE_FORCED_RETRIEVAL);
         assertThat(response.getAnswer()).isEqualTo(KnowledgeAgentService.NO_ACCESSIBLE_EVIDENCE);
@@ -157,7 +165,7 @@ class KnowledgeAgentServiceTest {
                 .thenReturn(List.of(hit(2L, 1, "系统介绍", "系统支持报销申请")));
         when(model.generate(anyString())).thenReturn("系统支持报销申请。");
 
-        AgentResponse response = service.ask("系统能做什么", "qwen");
+        AgentResponse response = service.ask("系统能做什么", "qwen", "u:1");
 
         assertThat(response.getPathType()).isEqualTo(AgentPathType.JUDGE_UNCERTAIN_FORCED_RETRIEVAL);
         assertThat(response.getCitations()).hasSize(1);
@@ -175,7 +183,7 @@ class KnowledgeAgentServiceTest {
                 .thenReturn(List.of(hit(3L, 0, "报销流程", "报销需要凭证")));
         when(model.generate(anyString())).thenReturn("报销需要凭证。");
 
-        AgentResponse response = service.ask("报销流程是什么", "qwen");
+        AgentResponse response = service.ask("报销流程是什么", "qwen", "u:1");
 
         assertThat(response.getPathType()).isEqualTo(AgentPathType.JUDGE_FAILURE);
         assertThat(response.getCitations()).hasSize(1);
@@ -190,7 +198,7 @@ class KnowledgeAgentServiceTest {
         when(draftJudgeService.judge(model, "测试问题")).thenReturn(JudgeVerdict.REQUIRES_KB);
         when(knowledgeBaseTool.searchKnowledgeBase("测试问题")).thenReturn(List.of());
 
-        service.ask("测试问题", "qwen");
+        service.ask("测试问题", "qwen", "u:1");
 
         verify(draftJudgeService, times(1)).judge(any(), eq("测试问题"));
     }

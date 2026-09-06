@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -35,6 +36,9 @@ class AiServiceAnswerCacheInvalidationTest {
     @Mock private ResponseEvaluationService responseEvaluationService;
     @Mock private AnalyticsService analyticsService;
     @Mock private DepartmentAccessService departmentAccessService;
+    @Mock private AmbiguityDetectionService ambiguityDetectionService;
+    @Mock private ContextQueryEnhancer contextQueryEnhancer;
+    @Mock private RetrievalContextStore retrievalContextStore;
     @Mock private ChatLanguageModel chatModel;
 
     private AiService aiService;
@@ -43,7 +47,8 @@ class AiServiceAnswerCacheInvalidationTest {
     void setUp() {
         when(redisTemplate.opsForSet()).thenReturn(setOperations);
         aiService = new AiService(modelFactory, modelConfig, redisTemplate, hybridRetrievalService,
-                chatMemoryStore, responseEvaluationService, analyticsService, departmentAccessService);
+                chatMemoryStore, responseEvaluationService, analyticsService, departmentAccessService,
+                ambiguityDetectionService, contextQueryEnhancer, retrievalContextStore);
     }
 
     @Test
@@ -56,6 +61,10 @@ class AiServiceAnswerCacheInvalidationTest {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(departmentAccessService.currentScopeCacheKey()).thenReturn("dept-10");
         when(valueOperations.get(anyString())).thenReturn(null);
+        when(retrievalContextStore.current(anyString())).thenReturn(null);
+        when(contextQueryEnhancer.enhance(anyString(), any()))
+                .thenReturn(ContextQueryEnhancer.Enhancement.none());
+        when(ambiguityDetectionService.detectClarification(any())).thenReturn(java.util.Optional.empty());
         when(modelFactory.createModel("deepseek")).thenReturn(chatModel);
         when(chatModel.generate(anyString())).thenReturn("请先提交报销单");
 
