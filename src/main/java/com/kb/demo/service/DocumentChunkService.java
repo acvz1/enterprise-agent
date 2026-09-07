@@ -226,27 +226,10 @@ public class DocumentChunkService {
             // --- C. VALIDATE ---
             validateRebuildVersion(docId, tv, segments.size());
 
-            // --- D. SWITCH（CAS）---
-            int affected = documentRepository.casActiveVersion(docId, activeVersion, tv);
-            if (affected == 0) {
-                // 并发更新：本次 v{targetVersion} 已被更新的文档版本覆盖，视为已废弃
-                logger.warn("CAS switch activeVersion failed, possibly overwritten by newer version, documentId={}, targetVersion={}", documentId, tv);
-                indexSyncTaskService.markSuccess(attempt.get());
-                scheduleGcAsync(docId, tv);
-                return segments.size();
-            }
-
-            // --- E. 失效答案缓存 ---
-            retrievalGenerationService.incrementGeneration();
-            aiService.invalidateAnswersByDocumentId(documentId);
-            logger.info("[DocumentChunk] version switch done, documentId={}, activeVersion={}->{}", documentId, activeVersion, tv);
-
-            indexSyncTaskService.markSuccess(attempt.get());
-
-            // --- F. 异步 GC 旧版本 ---
-            scheduleGcAsync(docId, activeVersion);
-
-            return segments.size();
+            // --- D. SWITCH + GC 决策 ---
+            // 幂等语义：同版本重放（activeVersion == targetVersion，如 1->1）与 CAS 冲突都不得
+            // 回收当前 serving 数据，也不自增 generation；仅真实版本切换才 GC 旧版本。
+            return applyVersionSwitch(attempt.get(), docId, segments.size(), activeVersion, tv);
         } catch (Exception exception) {
             indexSyncTaskService.markFailure(attempt.get(), exception);
             throw exception instanceof RuntimeException runtimeException
@@ -254,7 +237,46 @@ public class DocumentChunkService {
                     : new IllegalStateException("文档索引同步失败，documentId=" + documentId, exception);
         }
     }
-    
+
+    /**
+     * 版本切换 + 旧版本 GC 的幂等决策，在 BUILD/VALIDATE 完成后调用。
+     *
+     * 三种结局（绝不以"CAS 是否成功"单独决定 GC）：
+     * <ul>
+     *   <li>ALREADY_ACTIVE：activeVersion == targetVersion（含首次激活，activeVersion 为 null 时由
+     *       {@code NOT NULL DEFAULT 1} 兜底），是幂等重放。不发生版本切换，不 GC 当前 serving 版本，
+     *       也不自增 generation，直接按成功收尾。</li>
+     *   <li>SWITCHED：oldActive != targetVersion 且 CAS 成功。真实可见切换：increment generation、
+     *       失效答案缓存，并只异步 GC 被替换掉的 oldActive。</li>
+     *   <li>CONFLICT：CAS 返回 0（并发更新已抢先切换）。本次 targetVersion 构建已被覆盖，不 GC
+     *       任何版本、不自增 generation，仅标记任务成功结束。</li>
+     * </ul>
+     *
+     * @return 本次已写入的 chunk 数
+     */
+    int applyVersionSwitch(DocumentIndexSyncTaskService.SyncAttempt attempt, Long documentId,
+                           int chunkCount, Integer oldActive, int targetVersion) {
+        if (oldActive == null || oldActive.equals(targetVersion)) {
+            logger.info("[DocumentChunk] version already active, idempotent success, documentId={}, activeVersion={}", documentId, targetVersion);
+            indexSyncTaskService.markSuccess(attempt);
+            return chunkCount;
+        }
+
+        int affected = documentRepository.casActiveVersion(documentId, oldActive, targetVersion);
+        if (affected == 0) {
+            logger.warn("CAS switch activeVersion failed, possibly overwritten by newer version, documentId={}, targetVersion={}", documentId, targetVersion);
+            indexSyncTaskService.markSuccess(attempt);
+            return chunkCount;
+        }
+
+        retrievalGenerationService.incrementGeneration();
+        aiService.invalidateAnswersByDocumentId(documentId);
+        logger.info("[DocumentChunk] version switch done, documentId={}, activeVersion={}->{}", documentId, oldActive, targetVersion);
+        indexSyncTaskService.markSuccess(attempt);
+        scheduleGcAsync(documentId, oldActive);
+        return chunkCount;
+    }
+
     /**
      * 批量处理文档分块和向量化
      * @param documentIds 文档ID列表
