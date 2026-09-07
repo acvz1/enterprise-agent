@@ -25,6 +25,8 @@ class AiServiceEvidenceGuardTest {
         ContextQueryEnhancer contextQueryEnhancer = mock(ContextQueryEnhancer.class);
         AmbiguityDetectionService ambiguityDetectionService = mock(AmbiguityDetectionService.class);
         RetrievalContextStore retrievalContextStore = mock(RetrievalContextStore.class);
+        PendingClarificationStore pendingClarificationStore = mock(PendingClarificationStore.class);
+        ClarificationFollowUpResolver clarificationFollowUpResolver = mock(ClarificationFollowUpResolver.class);
         when(hybridRetrievalService.searchHits("报销流程", 10, 5)).thenReturn(List.of());
         when(departmentAccessService.currentScopeCacheKey()).thenReturn("dept-10");
         when(retrievalContextStore.current(anyString())).thenReturn(null);
@@ -35,7 +37,7 @@ class AiServiceEvidenceGuardTest {
                 modelFactory, mock(ModelConfig.class), mock(RedisTemplate.class), hybridRetrievalService,
                 chatMemoryStore, mock(ResponseEvaluationService.class), mock(AnalyticsService.class),
                 departmentAccessService, ambiguityDetectionService, contextQueryEnhancer,
-                retrievalContextStore);
+                retrievalContextStore, pendingClarificationStore, clarificationFollowUpResolver);
 
         Map<String, Object> result = service.askQuestion("报销流程", "alice:default", "deepseek");
 

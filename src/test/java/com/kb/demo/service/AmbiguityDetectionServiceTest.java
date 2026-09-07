@@ -21,6 +21,7 @@ class AmbiguityDetectionServiceTest {
         service = new AmbiguityDetectionService();
         ReflectionTestUtils.setField(service, "ambiguityScoreGap", 0.05);
         ReflectionTestUtils.setField(service, "minDocuments", 2);
+        ReflectionTestUtils.setField(service, "minRelevanceScore", 0.80);
     }
 
     private RetrievalHit hit(long docId, long chunkId, String title, double score) {
@@ -42,6 +43,17 @@ class AmbiguityDetectionServiceTest {
     }
 
     @Test
+    void closeScoresButSecondTopicBelowMinimumRelevance_doesNotClarify() {
+        List<RetrievalHit> hits = List.of(
+                hit(1L, 11L, "员工手册", 0.81),
+                hit(2L, 21L, "差旅报销制度", 0.79));
+
+        Optional<String> result = service.detectClarification(hits);
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
     void multipleChunksSameDocument_doesNotClarify() {
         List<RetrievalHit> hits = List.of(
                 hit(1L, 11L, "报销制度", 0.90),
@@ -57,7 +69,7 @@ class AmbiguityDetectionServiceTest {
     void clearWinner_doesNotClarify() {
         List<RetrievalHit> hits = List.of(
                 hit(1L, 11L, "差旅报销", 0.95),
-                hit(2L, 21L, "住宿报销", 0.60));
+                hit(2L, 21L, "住宿报销", 0.86));
 
         Optional<String> result = service.detectClarification(hits);
 

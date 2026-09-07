@@ -3,6 +3,7 @@ package com.kb.demo.service;
 import com.kb.demo.config.ModelConfig;
 
 import com.kb.demo.entity.SessionMessage;
+import com.kb.demo.dto.PendingClarification;
 import com.kb.demo.dto.RetrievalHit;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
@@ -22,6 +23,7 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.HashMap;
+import java.util.Optional;
 
 /**
  * AI服务类
@@ -44,6 +46,8 @@ public class AiService {
     private final AmbiguityDetectionService ambiguityDetectionService;
     private final ContextQueryEnhancer contextQueryEnhancer;
     private final RetrievalContextStore retrievalContextStore;
+    private final PendingClarificationStore pendingClarificationStore;
+    private final ClarificationFollowUpResolver clarificationFollowUpResolver;
 
     private static final String NO_ACCESSIBLE_EVIDENCE = "未找到当前账号可访问的知识库内容，无法基于证据回答该问题。";
     private static final long ANSWER_CACHE_TTL_MINUTES = 5L;
@@ -60,7 +64,9 @@ public class AiService {
             DepartmentAccessService departmentAccessService,
             AmbiguityDetectionService ambiguityDetectionService,
             ContextQueryEnhancer contextQueryEnhancer,
-            RetrievalContextStore retrievalContextStore) {
+            RetrievalContextStore retrievalContextStore,
+            PendingClarificationStore pendingClarificationStore,
+            ClarificationFollowUpResolver clarificationFollowUpResolver) {
         this.modelFactory = modelFactory;
         this.modelConfig = modelConfig;
         this.redisTemplate = redisTemplate;
@@ -72,6 +78,8 @@ public class AiService {
         this.ambiguityDetectionService = ambiguityDetectionService;
         this.contextQueryEnhancer = contextQueryEnhancer;
         this.retrievalContextStore = retrievalContextStore;
+        this.pendingClarificationStore = pendingClarificationStore;
+        this.clarificationFollowUpResolver = clarificationFollowUpResolver;
     }
 
     public Map<String, Object> askQuestion(String question, String sessionId) {
@@ -79,6 +87,20 @@ public class AiService {
     }
     
     public Map<String, Object> askQuestion(String question, String sessionId, String modelName) {
+        Optional<PendingClarification> pending = pendingClarificationStore.current(sessionId);
+        if (pending.isPresent()) {
+            ClarificationFollowUpResolver.Resolution resolution =
+                    clarificationFollowUpResolver.resolve(question, pending.get());
+            if (resolution.resolved()) {
+                return answerClarificationFollowUp(pending.get(), resolution, modelName, sessionId);
+            }
+            if (!clarificationFollowUpResolver.looksLikeNewQuestion(question)) {
+                return Map.of("answer", clarificationFollowUpResolver.retryPrompt(pending.get()), "fromCache", false,
+                        "model", modelName, "citations", List.of());
+            }
+            pendingClarificationStore.clear(sessionId);
+        }
+
         // 1) 短 Query / 上下文依赖：先增强检索 query（原始 question 保留给回答生成）
         ContextQueryEnhancer.Enhancement enhancement =
                 contextQueryEnhancer.enhance(question, retrievalContextStore.current(sessionId));
@@ -109,9 +131,10 @@ public class AiService {
         retrievalContextStore.record(sessionId, retrievalQuery);
 
         // 2) 歧义检测：TopK 命中多个主题且分数接近 → 返回澄清，不猜答案
-        var clarification = ambiguityDetectionService.detectClarification(relevantHits);
+        var clarification = ambiguityDetectionService.detect(relevantHits);
         if (clarification.isPresent()) {
-            return Map.of("answer", clarification.get(), "fromCache", false,
+            pendingClarificationStore.save(sessionId, question, clarification.get().candidates());
+            return Map.of("answer", clarification.get().message(), "fromCache", false,
                     "model", modelName, "citations", List.of());
         }
 
@@ -152,6 +175,28 @@ public class AiService {
     public void askQuestionStream(String question, String sessionId, SseEmitter emitter, String modelName) throws IOException {
         logger.info("开始处理流式请求 - 问题: {}, 会话ID: {}, 模型: {}", question, sessionId, modelName);
 
+        Optional<PendingClarification> pending = pendingClarificationStore.current(sessionId);
+        if (pending.isPresent()) {
+            ClarificationFollowUpResolver.Resolution resolution =
+                    clarificationFollowUpResolver.resolve(question, pending.get());
+            if (resolution.resolved()) {
+                Map<String, Object> response = answerClarificationFollowUp(pending.get(), resolution, modelName, sessionId);
+                emitter.send(SseEmitter.event().name("message").data(response.get("answer")));
+                emitter.send(SseEmitter.event().name("metadata").data(Map.of(
+                        "fromCache", false, "model", modelName, "citations", response.get("citations"))));
+                emitter.complete();
+                return;
+            }
+            if (!clarificationFollowUpResolver.looksLikeNewQuestion(question)) {
+                emitter.send(SseEmitter.event().name("message").data(clarificationFollowUpResolver.retryPrompt(pending.get())));
+                emitter.send(SseEmitter.event().name("metadata")
+                        .data(Map.of("fromCache", false, "model", modelName, "citations", List.of())));
+                emitter.complete();
+                return;
+            }
+            pendingClarificationStore.clear(sessionId);
+        }
+
         // 生成缓存键
         String cacheKey = answerCacheKey(sessionId, question, modelName);
         logger.debug("缓存键: {}", cacheKey);
@@ -184,9 +229,10 @@ public class AiService {
         retrievalContextStore.record(sessionId, retrievalQuery);
 
         // 2) 歧义检测：TopK 命中多个主题且分数接近 → 返回澄清，不猜答案
-        var clarification = ambiguityDetectionService.detectClarification(relevantHits);
+        var clarification = ambiguityDetectionService.detect(relevantHits);
         if (clarification.isPresent()) {
-            emitter.send(SseEmitter.event().name("message").data(clarification.get()));
+            pendingClarificationStore.save(sessionId, question, clarification.get().candidates());
+            emitter.send(SseEmitter.event().name("message").data(clarification.get().message()));
             emitter.send(SseEmitter.event().name("metadata")
                     .data(Map.of("fromCache", false, "model", modelName, "citations", List.of())));
             emitter.complete();
@@ -346,7 +392,39 @@ public class AiService {
         
         // 清除会话记忆
         chatMemoryStore.clear(sessionId);
+        pendingClarificationStore.clear(sessionId);
         logger.info("会话缓存和记忆已清除: sessionId={}", sessionId);
+    }
+
+    /** 已解析澄清选择后，用原问题在用户选定文档范围内重新取证。 */
+    private Map<String, Object> answerClarificationFollowUp(PendingClarification pending,
+            ClarificationFollowUpResolver.Resolution resolution, String modelName, String sessionId) {
+        Set<Long> selectedDocumentIds = resolution.candidates().stream()
+                .map(candidate -> candidate.documentId()).collect(Collectors.toSet());
+        List<RetrievalHit> hits;
+        try {
+            hits = hybridRetrievalService.searchHitsInDocuments(
+                    pending.originalQuery(), 10, 5, selectedDocumentIds);
+        } catch (IOException e) {
+            throw new IllegalStateException("混合检索失败", e);
+        }
+        if (hits.isEmpty()) {
+            return Map.of("answer", NO_ACCESSIBLE_EVIDENCE, "fromCache", false,
+                    "model", modelName, "citations", List.of());
+        }
+
+        String context = hits.stream()
+                .map(hit -> "标题: " + hit.getDocumentTitle()
+                        + "\n分块: " + hit.getChunkIndex()
+                        + "\n内容: " + hit.getContent())
+                .collect(Collectors.joining("\n\n"));
+        String prompt = "请仅根据以下知识库内容回答问题。若证据不足，请明确说明知识库中没有足够信息，不要使用模型自身知识补充事实。\n\n" +
+                "知识库内容:\n" + context + "\n\n" +
+                "问题: " + pending.originalQuery();
+        String answer = modelFactory.createModel(modelName).generate(prompt);
+        pendingClarificationStore.clear(sessionId);
+        retrievalContextStore.record(sessionId, pending.originalQuery());
+        return Map.of("answer", answer, "fromCache", false, "model", modelName, "citations", hits);
     }
 
     /** 同一会话在不同部门数据范围下不能复用答案。 */

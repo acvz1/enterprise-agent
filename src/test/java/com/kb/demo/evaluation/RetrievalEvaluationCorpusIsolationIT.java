@@ -42,7 +42,7 @@ class RetrievalEvaluationCorpusIsolationIT {
         try {
             for (IsolatedRun run : runs) run.cleanUp();
             if (developmentEmbeddingKey != null) {
-                try (redis.clients.jedis.JedisPooled redis = new redis.clients.jedis.JedisPooled("localhost", 6379)) {
+                try (redis.clients.jedis.JedisPooled redis = new redis.clients.jedis.JedisPooled("localhost", 16379)) {
                     redis.del(developmentEmbeddingKey);
                 }
             }
@@ -71,7 +71,7 @@ class RetrievalEvaluationCorpusIsolationIT {
 
         run.cleanUp();
         assertThat(productionElasticsearch.countByDocumentId(DEV_DOCUMENT_ID)).isEqualTo(1);
-        try (redis.clients.jedis.JedisPooled redis = new redis.clients.jedis.JedisPooled("localhost", 6379)) {
+        try (redis.clients.jedis.JedisPooled redis = new redis.clients.jedis.JedisPooled("localhost", 16379)) {
             assertThat(redis.exists(developmentEmbeddingKey)).isTrue();
         }
     }
@@ -107,7 +107,7 @@ class RetrievalEvaluationCorpusIsolationIT {
         String content = "开发环境干扰文档：年假提前3个工作日申请，并且该文本不应进入 Evaluation。";
         productionElasticsearch.indexChunk(new ElasticsearchChunkDocument(DEV_DOCUMENT_ID, 0, content));
         productionElasticsearch.refreshIndex();
-        var store = RedisEmbeddingStore.builder().host("localhost").port(6379)
+        var store = RedisEmbeddingStore.builder().host("localhost").port(16379)
                 .dimension(EmbeddingModelConfig.EMBEDDING_DIMENSION)
                 .indexName("document-embeddings").metadataKeys(List.of("documentId", "chunkIndex")).build();
         String embeddingId = store.add(new BgeSmallZhV15EmbeddingModel().embed(content).content(),
@@ -118,7 +118,7 @@ class RetrievalEvaluationCorpusIsolationIT {
     private IsolatedRun createRun(String label) throws Exception {
         String namespace = "retrieval-eval-isolation-" + label + "-" + UUID.randomUUID().toString().replace("-", "");
         EvaluationFixture fixture = EvaluationFixture.current();
-        EvaluationRedisVectorSearch redis = new EvaluationRedisVectorSearch("localhost", 6379, namespace);
+        EvaluationRedisVectorSearch redis = new EvaluationRedisVectorSearch("localhost", 16379, namespace);
         ElasticsearchSearchService elasticsearch = new ElasticsearchSearchService(client, namespace + "-es");
         ReflectionTestUtils.setField(elasticsearch, "minBm25Score", 10.0);
         fixture.index(redis, elasticsearch);

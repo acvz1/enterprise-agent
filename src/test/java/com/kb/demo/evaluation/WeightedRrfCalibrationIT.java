@@ -160,7 +160,7 @@ class WeightedRrfCalibrationIT {
         ReflectionTestUtils.setField(elasticsearch, "minBm25Score", 0.0);
         elasticsearch.createIndexIfAbsent();
         redisVector = new EvaluationRedisVectorSearch("localhost",
-                intProperty("evaluation.redis-port", 6379), namespace);
+                intProperty("evaluation.redis-port", 16379), namespace);
     }
 
     // ── Raw candidate collection ──────────────────────────────────────────────

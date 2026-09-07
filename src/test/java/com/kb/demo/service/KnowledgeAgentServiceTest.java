@@ -3,6 +3,8 @@ package com.kb.demo.service;
 import com.kb.demo.agent.KnowledgeAgent;
 import com.kb.demo.agent.KnowledgeBaseTool;
 import com.kb.demo.dto.AgentResponse;
+import com.kb.demo.dto.ClarificationCandidate;
+import com.kb.demo.dto.PendingClarification;
 import com.kb.demo.dto.RetrievalHit;
 import com.kb.demo.judge.AgentPathType;
 import com.kb.demo.judge.DraftJudgeService;
@@ -21,6 +23,7 @@ import org.mockito.quality.Strictness;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,6 +39,8 @@ class KnowledgeAgentServiceTest {
     @Mock AmbiguityDetectionService ambiguityDetectionService;
     @Mock ContextQueryEnhancer contextQueryEnhancer;
     @Mock RetrievalContextStore retrievalContextStore;
+    @Mock PendingClarificationStore pendingClarificationStore;
+    @Mock ClarificationFollowUpResolver clarificationFollowUpResolver;
     @Mock ChatLanguageModel model;
     @Mock KnowledgeAgent agent;
     @Mock ModelFactory modelFactory;
@@ -47,7 +52,8 @@ class KnowledgeAgentServiceTest {
     private class TestableService extends KnowledgeAgentService {
         TestableService() {
             super(modelFactory, knowledgeBaseTool, draftJudgeService, ambiguityDetectionService,
-                    contextQueryEnhancer, retrievalContextStore, objectMapper);
+                    contextQueryEnhancer, retrievalContextStore, pendingClarificationStore,
+                    clarificationFollowUpResolver, objectMapper);
         }
         @Override
         protected KnowledgeAgent buildAgent(ChatLanguageModel m) {
@@ -62,10 +68,11 @@ class KnowledgeAgentServiceTest {
         service = new TestableService();
         when(modelFactory.createModel(anyString())).thenReturn(model);
         when(agent.chat(anyString())).thenReturn(agentResult);
-        when(ambiguityDetectionService.detectClarification(any())).thenReturn(java.util.Optional.empty());
+        when(ambiguityDetectionService.detect(any())).thenReturn(Optional.empty());
         when(contextQueryEnhancer.enhance(anyString(), any()))
                 .thenReturn(ContextQueryEnhancer.Enhancement.none());
         when(retrievalContextStore.current(any())).thenReturn(null);
+        when(pendingClarificationStore.current(any())).thenReturn(Optional.empty());
     }
 
     // -----------------------------------------------------------------------
@@ -203,6 +210,42 @@ class KnowledgeAgentServiceTest {
         verify(draftJudgeService, times(1)).judge(any(), eq("测试问题"));
     }
 
+    @Test
+    void clarificationAllFollowUpUsesOriginalQueryInsteadOfSearchingForFollowUpText() {
+        PendingClarification pending = pending("公司年假有多长");
+        when(pendingClarificationStore.current("alice:session-a")).thenReturn(Optional.of(pending));
+        when(clarificationFollowUpResolver.resolve("都问", pending))
+                .thenReturn(ClarificationFollowUpResolver.Resolution.all(pending.candidates()));
+        when(knowledgeBaseTool.searchKnowledgeBaseInDocuments("公司年假有多长", Set.of(1L, 2L)))
+                .thenReturn(List.of(hit(1L, 0, "员工手册", "年假5天")));
+        when(modelFactory.createModel("qwen")).thenReturn(model);
+        when(model.generate(anyString())).thenReturn("员工年假为5天。");
+
+        AgentResponse response = service.ask("都问", "qwen", "alice:session-a");
+
+        assertThat(response.getPathType()).isEqualTo(AgentPathType.CLARIFICATION_FOLLOW_UP);
+        assertThat(response.getAnswer()).isEqualTo("员工年假为5天。");
+        verify(agent, never()).chat(anyString());
+        verify(pendingClarificationStore).clear("alice:session-a");
+    }
+
+    @Test
+    void clarificationFirstFollowUpRestrictsEvidenceToFirstCandidate() {
+        PendingClarification pending = pending("公司年假有多长");
+        when(pendingClarificationStore.current("alice:session-a")).thenReturn(Optional.of(pending));
+        when(clarificationFollowUpResolver.resolve("第一个", pending))
+                .thenReturn(ClarificationFollowUpResolver.Resolution.single(pending.candidates().get(0)));
+        when(knowledgeBaseTool.searchKnowledgeBaseInDocuments("公司年假有多长", Set.of(1L)))
+                .thenReturn(List.of(hit(1L, 0, "员工手册", "年假5天")));
+        when(modelFactory.createModel("qwen")).thenReturn(model);
+        when(model.generate(anyString())).thenReturn("员工年假为5天。");
+
+        AgentResponse response = service.ask("第一个", "qwen", "alice:session-a");
+
+        assertThat(response.getCitations()).allMatch(hit -> hit.getDocumentId().equals(1L));
+        verify(knowledgeBaseTool).searchKnowledgeBaseInDocuments("公司年假有多长", Set.of(1L));
+    }
+
     // -----------------------------------------------------------------------
     // helpers
     // -----------------------------------------------------------------------
@@ -220,5 +263,11 @@ class KnowledgeAgentServiceTest {
 
     private RetrievalHit hit(Long docId, int chunkIndex, String title, String content) {
         return new RetrievalHit(docId, null, chunkIndex, title, content, 0.0, Set.of());
+    }
+
+    private PendingClarification pending(String originalQuery) {
+        return new PendingClarification(originalQuery, List.of(
+                new ClarificationCandidate(1L, "员工手册"),
+                new ClarificationCandidate(2L, "差旅报销制度")), "2026-09-07T00:00:00Z");
     }
 }

@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 使用本地 Redis Stack 验证向量检索结果能够还原为 RetrievalCandidate。
  *
- * 该测试依赖 localhost:6379 中已经重建的 document-embeddings 索引，
+ * 该测试依赖 localhost:16379 中已经重建的 document-embeddings 索引，
  * 因此使用 IT 后缀，避免普通单元测试默认执行它。
  */
 class VectorSearchServiceRedisIT {
@@ -21,7 +21,7 @@ class VectorSearchServiceRedisIT {
     void searchVectorCandidatesReturnsMetadataFromRedis() {
         VectorSearchService service = new VectorSearchService();
         ReflectionTestUtils.setField(service, "redisHost", "localhost");
-        ReflectionTestUtils.setField(service, "redisPort", 6379);
+        ReflectionTestUtils.setField(service, "redisPort", 16379);
 
         List<RetrievalCandidate> candidates =
                 service.searchVectorCandidates("智能搜索", 3, 0.0);

@@ -61,7 +61,7 @@ public class VectorSearchService {
     @Value("${spring.data.redis.host:localhost}")
     private String redisHost;
     
-    @Value("${spring.data.redis.port:6379}")
+    @Value("${spring.data.redis.port:16379}")
     private int redisPort;
     
     /**

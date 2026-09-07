@@ -63,11 +63,11 @@ class HybridRetrievalServiceIT {
         elasticsearchSearchService =
                 new ElasticsearchSearchService(new ElasticsearchClient(transport));
 
-        redisCleanupClient = new JedisPooled("localhost", 6379);
+        redisCleanupClient = new JedisPooled("localhost", 16379);
         deleteTestEmbeddingDocuments();
         redisEmbeddingStore = RedisEmbeddingStore.builder()
                 .host("localhost")
-                .port(6379)
+                .port(16379)
                 .dimension(EmbeddingModelConfig.EMBEDDING_DIMENSION)
                 .indexName("document-embeddings")
                 .metadataKeys(List.of("documentId", "chunkIndex"))
@@ -122,7 +122,7 @@ class HybridRetrievalServiceIT {
     void searchMergesRedisAndElasticsearchCandidateForSameChunk() throws IOException {
         VectorSearchService vectorSearchService = new VectorSearchService();
         ReflectionTestUtils.setField(vectorSearchService, "redisHost", "localhost");
-        ReflectionTestUtils.setField(vectorSearchService, "redisPort", 6379);
+        ReflectionTestUtils.setField(vectorSearchService, "redisPort", 16379);
 
         DepartmentAccessService departmentAccessService = mock(DepartmentAccessService.class);
         when(departmentAccessService.currentScope())

@@ -49,7 +49,7 @@ Useful optional parameters:
 -Dretrieval.eval.candidate-limit=50
 -Dretrieval.eval.sweep-points=21
 -Dretrieval.eval.redis-host=localhost
--Dretrieval.eval.redis-port=6379
+-Dretrieval.eval.redis-port=16379
 -Dretrieval.eval.elasticsearch-port=9200
 -Dretrieval.eval.output-dir=D:\reports\threshold-eval
 ```

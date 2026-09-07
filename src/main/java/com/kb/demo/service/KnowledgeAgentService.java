@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kb.demo.agent.KnowledgeAgent;
 import com.kb.demo.agent.KnowledgeBaseTool;
 import com.kb.demo.dto.AgentResponse;
+import com.kb.demo.dto.PendingClarification;
 import com.kb.demo.dto.RetrievalHit;
 import com.kb.demo.judge.AgentPathType;
 import com.kb.demo.judge.DraftJudgeService;
@@ -20,6 +21,8 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -41,21 +44,27 @@ public class KnowledgeAgentService {
     private final AmbiguityDetectionService ambiguityDetectionService;
     private final ContextQueryEnhancer contextQueryEnhancer;
     private final RetrievalContextStore retrievalContextStore;
+    private final PendingClarificationStore pendingClarificationStore;
+    private final ClarificationFollowUpResolver clarificationFollowUpResolver;
     private final ObjectMapper objectMapper;
 
     public KnowledgeAgentService(ModelFactory modelFactory,
                                  KnowledgeBaseTool knowledgeBaseTool,
                                  DraftJudgeService draftJudgeService,
                                  AmbiguityDetectionService ambiguityDetectionService,
-                                 ContextQueryEnhancer contextQueryEnhancer,
-                                 RetrievalContextStore retrievalContextStore,
-                                 ObjectMapper objectMapper) {
+                                  ContextQueryEnhancer contextQueryEnhancer,
+                                  RetrievalContextStore retrievalContextStore,
+                                  PendingClarificationStore pendingClarificationStore,
+                                  ClarificationFollowUpResolver clarificationFollowUpResolver,
+                                  ObjectMapper objectMapper) {
         this.modelFactory = modelFactory;
         this.knowledgeBaseTool = knowledgeBaseTool;
         this.draftJudgeService = draftJudgeService;
         this.ambiguityDetectionService = ambiguityDetectionService;
         this.contextQueryEnhancer = contextQueryEnhancer;
         this.retrievalContextStore = retrievalContextStore;
+        this.pendingClarificationStore = pendingClarificationStore;
+        this.clarificationFollowUpResolver = clarificationFollowUpResolver;
         this.objectMapper = objectMapper;
     }
 
@@ -67,6 +76,21 @@ public class KnowledgeAgentService {
     }
 
     public AgentResponse ask(String question, String modelName, String sessionId) {
+        Optional<PendingClarification> pending = pendingClarificationStore.current(sessionId);
+        if (pending.isPresent()) {
+            ClarificationFollowUpResolver.Resolution resolution =
+                    clarificationFollowUpResolver.resolve(question, pending.get());
+            if (resolution.resolved()) {
+                return answerClarificationFollowUp(pending.get(), resolution, modelName, sessionId);
+            }
+            if (!clarificationFollowUpResolver.looksLikeNewQuestion(question)) {
+                return new AgentResponse(clarificationFollowUpResolver.retryPrompt(pending.get()), modelName,
+                        false, List.of(), List.of(), AgentPathType.CLARIFICATION);
+            }
+            // 用户提出了新的完整问题：允许它覆盖已经过期的候选选择。
+            pendingClarificationStore.clear(sessionId);
+        }
+
         ChatLanguageModel model = modelFactory.createModel(modelName);
 
         KnowledgeAgent agent = buildAgent(model);
@@ -84,9 +108,10 @@ public class KnowledgeAgentService {
                         citations, AgentPathType.AGENT_TOOL_USED);
             }
             // 歧义检测：Agent 检索结果命中多个主题且分数接近 → 返回澄清，不猜答案
-            var clarification = ambiguityDetectionService.detectClarification(citations);
+            var clarification = ambiguityDetectionService.detect(citations);
             if (clarification.isPresent()) {
-                return new AgentResponse(clarification.get(), modelName, true, toolNames,
+                pendingClarificationStore.save(sessionId, question, clarification.get().candidates());
+                return new AgentResponse(clarification.get().message(), modelName, true, toolNames,
                         List.of(), AgentPathType.CLARIFICATION);
             }
             retrievalContextStore.record(sessionId, question);
@@ -147,9 +172,10 @@ public class KnowledgeAgentService {
         }
 
         // 歧义检测：强制检索命中多个主题且分数接近 → 返回澄清，不猜答案
-        var clarification = ambiguityDetectionService.detectClarification(hits);
+        var clarification = ambiguityDetectionService.detect(hits);
         if (clarification.isPresent()) {
-            return new AgentResponse(clarification.get(), modelName, false,
+            pendingClarificationStore.save(sessionId, retrievalQuery, clarification.get().candidates());
+            return new AgentResponse(clarification.get().message(), modelName, false,
                     originalToolNames, List.of(), AgentPathType.CLARIFICATION);
         }
 
@@ -162,6 +188,31 @@ public class KnowledgeAgentService {
         String prompt = String.format(GROUNDED_PROMPT_TEMPLATE, context, question);
         String answer = model.generate(prompt);
         return new AgentResponse(answer, modelName, true, originalToolNames, hits, pathType);
+    }
+
+    private AgentResponse answerClarificationFollowUp(PendingClarification pending,
+            ClarificationFollowUpResolver.Resolution resolution, String modelName, String sessionId) {
+        Set<Long> selectedDocumentIds = resolution.candidates().stream()
+                .map(candidate -> candidate.documentId()).collect(Collectors.toSet());
+        List<RetrievalHit> hits = knowledgeBaseTool.searchKnowledgeBaseInDocuments(
+                pending.originalQuery(), selectedDocumentIds);
+        if (hits.isEmpty()) {
+            return new AgentResponse(NO_ACCESSIBLE_EVIDENCE, modelName, true,
+                    List.of("searchKnowledgeBase"), List.of(), AgentPathType.CLARIFICATION_FOLLOW_UP);
+        }
+
+        ChatLanguageModel model = modelFactory.createModel(modelName);
+        String context = hits.stream()
+                .map(h -> "标题: " + h.getDocumentTitle()
+                        + "\n分块: " + h.getChunkIndex()
+                        + "\n内容: " + h.getContent())
+                .collect(Collectors.joining("\n\n"));
+        String prompt = String.format(GROUNDED_PROMPT_TEMPLATE, context, pending.originalQuery());
+        String answer = model.generate(prompt);
+        pendingClarificationStore.clear(sessionId);
+        retrievalContextStore.record(sessionId, pending.originalQuery());
+        return new AgentResponse(answer, modelName, true, List.of("searchKnowledgeBase"), hits,
+                AgentPathType.CLARIFICATION_FOLLOW_UP);
     }
 
     private List<RetrievalHit> extractCitations(Result<String> result) {

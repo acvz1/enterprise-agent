@@ -64,10 +64,10 @@ public class RetrievalEvaluationIT {
         elasticsearchSearchService =
                 new ElasticsearchSearchService(new ElasticsearchClient(transport));
 
-        redisCleanupClient = new JedisPooled("localhost", 6379);
+        redisCleanupClient = new JedisPooled("localhost", 16379);
         redisEmbeddingStore = RedisEmbeddingStore.builder()
                 .host("localhost")
-                .port(6379)
+                .port(16379)
                 .dimension(EmbeddingModelConfig.EMBEDDING_DIMENSION)
                 .indexName("document-embeddings")
                 .metadataKeys(List.of("documentId", "chunkIndex"))
@@ -75,7 +75,7 @@ public class RetrievalEvaluationIT {
 
         vectorSearchService = new VectorSearchService();
         ReflectionTestUtils.setField(vectorSearchService, "redisHost", "localhost");
-        ReflectionTestUtils.setField(vectorSearchService, "redisPort", 6379);
+        ReflectionTestUtils.setField(vectorSearchService, "redisPort", 16379);
         DepartmentAccessService departmentAccessService = mock(DepartmentAccessService.class);
         when(departmentAccessService.currentScope())
                 .thenReturn(new DepartmentAccessService.AccessScope(true, Set.of()));

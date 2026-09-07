@@ -1,6 +1,7 @@
 package com.kb.demo.service;
 
 import com.kb.demo.dto.RetrievalHit;
+import com.kb.demo.dto.ClarificationCandidate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -27,10 +28,14 @@ public class AmbiguityDetectionService {
     @Value("${app.query-understanding.ambiguity-min-documents:2}")
     private int minDocuments;
 
+    /** 两个竞争主题都必须达到此融合分数，才允许打断用户并要求澄清。 */
+    @Value("${app.query-understanding.ambiguity-min-relevance-score:0.02}")
+    private double minRelevanceScore;
+
     /**
      * 若 TopK 命中存在明显主题竞争，返回澄清问题；否则返回 empty。
      */
-    public Optional<String> detectClarification(List<RetrievalHit> hits) {
+    public Optional<Ambiguity> detect(List<RetrievalHit> hits) {
         if (hits == null || hits.size() < 2) {
             return Optional.empty();
         }
@@ -55,25 +60,46 @@ public class AmbiguityDetectionService {
         double top1 = sortedDocs.get(0).getValue();
         double top2 = sortedDocs.get(1).getValue();
 
+        // 分数接近不等于都有意义：两个候选都必须先达到最低相关性。
+        if (top1 < minRelevanceScore || top2 < minRelevanceScore) {
+            return Optional.empty();
+        }
+
         // 第一名明显主导 → 不歧义
         if (top1 - top2 >= ambiguityScoreGap) {
             return Optional.empty();
         }
 
-        // 基于实际命中生成候选主题（去重，最多 3 个）
-        List<String> titles = hits.stream()
-                .filter(h -> h.getDocumentId() != null)
-                .sorted(Comparator.comparingDouble(RetrievalHit::getFusionScore).reversed())
-                .map(RetrievalHit::getDocumentTitle)
-                .filter(t -> t != null && !t.isBlank())
-                .distinct()
+        Map<Long, String> titleByDocument = new LinkedHashMap<>();
+        for (RetrievalHit hit : hits) {
+            if (hit.getDocumentId() != null && hit.getDocumentTitle() != null && !hit.getDocumentTitle().isBlank()) {
+                titleByDocument.putIfAbsent(hit.getDocumentId(), hit.getDocumentTitle());
+            }
+        }
+        List<ClarificationCandidate> candidates = sortedDocs.stream()
+                .filter(entry -> entry.getValue() >= minRelevanceScore)
+                .map(entry -> new ClarificationCandidate(entry.getKey(), titleByDocument.get(entry.getKey())))
+                .filter(candidate -> candidate.label() != null && !candidate.label().isBlank())
                 .limit(3)
                 .toList();
 
-        if (titles.size() < 2) {
+        if (candidates.size() < 2) {
             return Optional.empty();
         }
 
-        return Optional.of("你想问 " + String.join("、", titles) + " 哪一个？");
+        return Optional.of(new Ambiguity(candidates));
+    }
+
+    /** 兼容既有调用方；需要保存候选状态时使用 {@link #detect(List)}。 */
+    public Optional<String> detectClarification(List<RetrievalHit> hits) {
+        return detect(hits).map(Ambiguity::message);
+    }
+
+    public record Ambiguity(List<ClarificationCandidate> candidates) {
+        public String message() {
+            String labels = candidates.stream().map(ClarificationCandidate::label)
+                    .reduce((left, right) -> left + "、" + right).orElse("候选主题");
+            return "你想问 " + labels + " 哪一个？";
+        }
     }
 }

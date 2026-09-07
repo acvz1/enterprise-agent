@@ -150,7 +150,7 @@ class RetrievalThresholdEvaluationIT {
         ReflectionTestUtils.setField(service, "redisHost",
                 System.getProperty("retrieval.eval.redis-host", "localhost"));
         ReflectionTestUtils.setField(service, "redisPort",
-                positiveIntProperty("retrieval.eval.redis-port", 6379));
+                positiveIntProperty("retrieval.eval.redis-port", 16379));
         return service;
     }
 

@@ -39,6 +39,8 @@ class AiServiceAnswerCacheInvalidationTest {
     @Mock private AmbiguityDetectionService ambiguityDetectionService;
     @Mock private ContextQueryEnhancer contextQueryEnhancer;
     @Mock private RetrievalContextStore retrievalContextStore;
+    @Mock private PendingClarificationStore pendingClarificationStore;
+    @Mock private ClarificationFollowUpResolver clarificationFollowUpResolver;
     @Mock private ChatLanguageModel chatModel;
 
     private AiService aiService;
@@ -48,7 +50,8 @@ class AiServiceAnswerCacheInvalidationTest {
         when(redisTemplate.opsForSet()).thenReturn(setOperations);
         aiService = new AiService(modelFactory, modelConfig, redisTemplate, hybridRetrievalService,
                 chatMemoryStore, responseEvaluationService, analyticsService, departmentAccessService,
-                ambiguityDetectionService, contextQueryEnhancer, retrievalContextStore);
+                ambiguityDetectionService, contextQueryEnhancer, retrievalContextStore,
+                pendingClarificationStore, clarificationFollowUpResolver);
     }
 
     @Test
@@ -64,7 +67,7 @@ class AiServiceAnswerCacheInvalidationTest {
         when(retrievalContextStore.current(anyString())).thenReturn(null);
         when(contextQueryEnhancer.enhance(anyString(), any()))
                 .thenReturn(ContextQueryEnhancer.Enhancement.none());
-        when(ambiguityDetectionService.detectClarification(any())).thenReturn(java.util.Optional.empty());
+        when(ambiguityDetectionService.detect(any())).thenReturn(java.util.Optional.empty());
         when(modelFactory.createModel("deepseek")).thenReturn(chatModel);
         when(chatModel.generate(anyString())).thenReturn("请先提交报销单");
 

@@ -47,7 +47,7 @@ class VectorSearchServiceTest {
     void setUp() {
         // 设置 Redis 配置（使用反射注入私有字段）
         ReflectionTestUtils.setField(vectorSearchService, "redisHost", "localhost");
-        ReflectionTestUtils.setField(vectorSearchService, "redisPort", 6379);
+        ReflectionTestUtils.setField(vectorSearchService, "redisPort", 16379);
         ReflectionTestUtils.setField(vectorSearchService, "embeddingModel", new BgeSmallZhV15EmbeddingModel());
 
         // 准备测试数据

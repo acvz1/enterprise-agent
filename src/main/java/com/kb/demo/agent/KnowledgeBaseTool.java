@@ -13,6 +13,7 @@ import com.kb.demo.dto.RetrievalHit;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Set;
 
 @Component
 public class KnowledgeBaseTool {
@@ -24,13 +25,7 @@ public class KnowledgeBaseTool {
 
     @Tool("搜索企业知识库。当用户询问公司制度、系统功能、业务资料或文档内容时调用")
     public List<RetrievalHit> searchKnowledgeBase(@P("需要在企业知识库中检索的完整问题") String query){
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        boolean canRead = authentication != null
-                && authentication.getAuthorities().stream()
-                    .anyMatch(authority ->
-                        "document:read".equals(authority.getAuthority())
-                    );
-        if (!canRead) {
+        if (!canReadKnowledgeBase()) {
             return List.of();
         }
 
@@ -39,6 +34,25 @@ public class KnowledgeBaseTool {
         }catch(IOException e){
             throw new IllegalStateException("知识库检索失败",e);
         }
+    }
+
+    /** 澄清选择后仅在已展示的候选文档范围内取证，不暴露为 LLM Tool。 */
+    public List<RetrievalHit> searchKnowledgeBaseInDocuments(String query, Set<Long> documentIds) {
+        if (!canReadKnowledgeBase()) {
+            return List.of();
+        }
+        try {
+            return hybridRetrievalService.searchHitsInDocuments(query, 10, 5, documentIds);
+        } catch (IOException e) {
+            throw new IllegalStateException("知识库检索失败", e);
+        }
+    }
+
+    private boolean canReadKnowledgeBase() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null
+                && authentication.getAuthorities().stream()
+                .anyMatch(authority -> "document:read".equals(authority.getAuthority()));
     }
     
 }

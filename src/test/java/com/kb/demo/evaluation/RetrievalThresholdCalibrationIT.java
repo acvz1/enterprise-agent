@@ -183,7 +183,7 @@ class RetrievalThresholdCalibrationIT {
         ReflectionTestUtils.setField(elasticsearch, "minBm25Score", 0.0);
         elasticsearch.createIndexIfAbsent();
         redisVector = new EvaluationRedisVectorSearch("localhost",
-                intProperty("evaluation.redis-port", 6379), namespace);
+                intProperty("evaluation.redis-port", 16379), namespace);
     }
 
     private Set<Long> allowedDocumentIds(EvaluationPermissionContext context, EvaluationFixture fixture) {

@@ -170,7 +170,7 @@ class RetrievalEvaluationV2IT {
     }
 
     private int elasticsearchPort() { return intProperty("evaluation.elasticsearch-port", 9200); }
-    private int redisPort() { return intProperty("evaluation.redis-port", 6379); }
+    private int redisPort() { return intProperty("evaluation.redis-port", 16379); }
     private int intProperty(String key, int defaultValue) { return Integer.getInteger(key, defaultValue); }
     private double doubleProperty(String key, double defaultValue) {
         String value = System.getProperty(key);

@@ -12,5 +12,7 @@ public enum AgentPathType {
     /** Judge 执行失败，fail-safe：强制检索后生成答案 */
     JUDGE_FAILURE,
     /** 短 Query 缺上下文或检索结果歧义，返回澄清问题而非猜测答案 */
-    CLARIFICATION
+    CLARIFICATION,
+    /** 用户在待澄清状态中选择候选后，以原问题在选定文档范围内重新取证 */
+    CLARIFICATION_FOLLOW_UP
 }

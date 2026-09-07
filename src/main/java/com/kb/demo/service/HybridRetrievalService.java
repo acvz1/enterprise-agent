@@ -12,6 +12,7 @@ import com.kb.demo.dto.RetrievalHit;
 import java.io.IOException;
 import java.util.List;
 import java.util.Set;
+import java.util.LinkedHashSet;
 
 //混合检索
 @Service
@@ -113,6 +114,28 @@ public class HybridRetrievalService {
     /** 使用当前环境配置的 Redis 向量阈值执行混合检索并补全证据。 */
     public List<RetrievalHit> searchHits(String query, int candidateLimit, int topK) throws IOException {
         return searchHits(query, candidateLimit, minVectorScore, topK);
+    }
+
+    /**
+     * 澄清选择后的定向检索：保留原有权限范围，再与用户选中的候选文档取交集。
+     * 此路径不复用普通 Retrieval Hits Cache，避免「全库 query」缓存混入已选主题。
+     */
+    public List<RetrievalHit> searchHitsInDocuments(String query, int candidateLimit, int topK,
+            Set<Long> selectedDocumentIds) throws IOException {
+        if (selectedDocumentIds == null || selectedDocumentIds.isEmpty()) {
+            return List.of();
+        }
+        DepartmentAccessService.AccessScope scope = departmentAccessService.currentScope();
+        Set<Long> allowedDocumentIds = new LinkedHashSet<>(selectedDocumentIds);
+        if (!scope.global()) {
+            allowedDocumentIds.retainAll(departmentAccessService.readableDocumentIds(scope));
+        }
+        if (allowedDocumentIds.isEmpty()) {
+            return List.of();
+        }
+        List<FusedRetrievalCandidate> candidates = doRetrieve(
+                query, candidateLimit, minVectorScore, topK, allowedDocumentIds);
+        return retrievalResultService.assembleHits(candidates, scope);
     }
 
     private List<FusedRetrievalCandidate> doRetrieve(
